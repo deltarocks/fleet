@@ -1,7 +1,5 @@
-= Fleet
-
 ++++
-<p align="center"><a href="https://github.com/CertainLach/fleet"><img alt="fleet temporary logo generated with midjourney" src="./docs/tmplogo.png" width="200px"></img></a></p>
+<p align="center"><a href="https://github.com/CertainLach/fleet"><img alt="fleet logo" src="./docs/logo.svg" width="300px"></img></a></p>
 ++++
 
 An NixOS cluster deployment tool.
