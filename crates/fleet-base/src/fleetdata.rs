@@ -7,8 +7,8 @@ use age::Recipient;
 use chrono::{DateTime, Utc};
 use fleet_shared::SecretData;
 use rand::{
-	distributions::{Alphanumeric, DistString},
-	thread_rng,
+	distr::{Alphanumeric, SampleString as _},
+	rng,
 };
 use serde::{de::Error, Deserialize, Serialize};
 use serde_json::Value;
@@ -47,7 +47,7 @@ impl<'de> Deserialize<'de> for FleetDataVersion {
 }
 
 fn generate_gc_prefix() -> String {
-	let id = Alphanumeric.sample_string(&mut thread_rng(), 8);
+	let id = Alphanumeric.sample_string(&mut rng(), 8);
 	format!("fleet-gc-{id}")
 }
 

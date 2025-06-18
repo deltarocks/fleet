@@ -15,7 +15,10 @@ use fleet_shared::SecretData;
 use nix_eval::{nix_go, nix_go_json, util::assert_warn, NixSession, Value};
 use openssh::SessionBuilder;
 use serde::de::DeserializeOwned;
+use tabled::Tabled;
 use tempfile::NamedTempFile;
+use time::{format_description, UtcDateTime};
+use tracing::warn;
 
 use crate::{
 	command::MyCommand,
@@ -104,8 +107,106 @@ pub struct ConfigHost {
 	pub local: bool,
 	pub session: OnceLock<Arc<openssh::Session>>,
 }
+
+#[derive(Debug, Clone, Copy)]
+pub enum GenerationStorage {
+	Deployer,
+	Machine,
+	Pusher,
+}
+impl GenerationStorage {
+	fn prefix(&self) -> &'static str {
+		match self {
+			GenerationStorage::Deployer => "deployer.",
+			GenerationStorage::Machine => "",
+			GenerationStorage::Pusher => "pusher.",
+		}
+	}
+}
+
+#[derive(Tabled, Debug)]
+pub struct Generation {
+	#[tabled(rename = "ID", format("{}", self.rollback_id()))]
+	pub id: u32,
+	#[tabled(rename = "Current")]
+	pub current: bool,
+	#[tabled(rename = "Created at")]
+	pub datetime: UtcDateTime,
+	#[tabled(format = "{:?}")]
+	pub store_path: PathBuf,
+	#[tabled(skip)]
+	pub location: GenerationStorage,
+}
+impl Generation {
+	pub fn rollback_id(&self) -> String {
+		format!("{}{}", self.location.prefix(), self.id)
+	}
+}
+
+fn parse_generation_line(g: &str) -> Option<Generation> {
+	let mut parts = g.split_whitespace();
+	let id = parts.next()?;
+	let id: u32 = id.parse().ok()?;
+	let date = parts.next()?;
+	let time = parts.next()?;
+	let current = if let Some(current) = parts.next() {
+		if current == "(current)" {
+			Some(true)
+		} else {
+			None
+		}
+	} else {
+		Some(false)
+	};
+	let current = current?;
+	if parts.next().is_some() {
+		warn!("unexpected text after generation: {g}");
+	}
+
+	let format = format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
+		.expect("valid format");
+	let datetime = UtcDateTime::parse(&format!("{date} {time}"), &format).ok()?;
+
+	Some(Generation {
+		id,
+		current,
+		datetime,
+		store_path: PathBuf::new(),
+		location: GenerationStorage::Machine,
+	})
+}
 // TODO: Move command helpers away with connectivity refactor
 impl ConfigHost {
+	pub async fn list_generations(&self, profile: &str) -> Result<Vec<Generation>> {
+		let mut cmd = self.cmd("nix-env").await?;
+		cmd.comparg("--profile", format!("/nix/var/nix/profiles/{profile}"))
+			.arg("--list-generations")
+			.env("TZ", "UTC");
+		// Sudo is required because --list-generations tries to acquire profile lock
+		let data = cmd.sudo().run_string().await?;
+		let mut generations = data
+			.split('\n')
+			.map(|e| e.trim())
+			.filter(|&l| !l.is_empty())
+			.filter_map(|g| {
+				let gen = parse_generation_line(g);
+				if gen.is_none() {
+					warn!("bad generation: {g}");
+				};
+				gen
+			})
+			.collect::<Vec<_>>();
+		for ele in generations.iter_mut() {
+			let mut cmd = self.cmd("readlink").await?;
+			cmd.arg("--")
+				.arg(format!("/nix/var/nix/profiles/{profile}-{}-link", ele.id));
+			let path = cmd.run_string().await?;
+			ele.store_path = PathBuf::from(path.trim_end_matches("\n"));
+		}
+
+		Ok(generations)
+	}
+
 	pub fn set_deploy_kind(&self, kind: DeployKind) {
 		self.deploy_kind
 			.set(kind)

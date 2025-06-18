@@ -10,6 +10,7 @@ use anyhow::{bail, Result};
 use clap::{CommandFactory, Parser};
 use cmds::{
 	build_systems::{BuildSystems, Deploy},
+	rollback::RollbackSingle,
 	complete::Complete,
 	info::Info,
 	secrets::Secret,
@@ -70,6 +71,8 @@ enum Opts {
 	BuildSystems(BuildSystems),
 	/// Upload and switch system closures
 	Deploy(Deploy),
+	/// Rollback remote machine by redeploying old generation as the new one
+	RollbackSingle(RollbackSingle),
 	/// Secret management
 	#[clap(subcommand)]
 	Secret(Secret),
@@ -97,6 +100,7 @@ async fn run_command(config: &Config, opts: FleetOpts, command: Opts) -> Result<
 	match command {
 		Opts::BuildSystems(c) => c.run(config, &opts).await?,
 		Opts::Deploy(d) => d.run(config, &opts).await?,
+		Opts::RollbackSingle(r) => r.run(config, &opts).await?,
 		Opts::Secret(s) => s.run(config, &opts).await?,
 		Opts::Info(i) => i.run(config).await?,
 		Opts::Prefetch(p) => p.run(config).await?,

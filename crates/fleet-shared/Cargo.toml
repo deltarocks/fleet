@@ -6,6 +6,6 @@ rust-version.workspace = true
 
 [dependencies]
 base64 = "0.22.1"
-serde = "1.0.202"
+serde = "1.0.219"
 unicode_categories = "0.1.1"
-z85 = "3.0.5"
+z85 = "3.0.6"

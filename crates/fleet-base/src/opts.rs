@@ -7,7 +7,6 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use clap::Parser;
 use nix_eval::{nix_go, util::assert_warn, NixSessionPool, Value};
 use nom::{
 	bytes::complete::take_while1,
@@ -15,6 +14,7 @@ use nom::{
 	combinator::{map, opt},
 	multi::separated_list1,
 	sequence::{preceded, separated_pair},
+	Parser,
 };
 
 use crate::{
@@ -38,11 +38,13 @@ fn host_item_parser(input: &str) -> Result<HostItem, String> {
 		err.to_string()
 	}
 
-	let (input, is_tag) = map(opt(char('@')), |c| c.is_some())(input).map_err(err_to_string)?;
+	let (input, is_tag) = map(opt(char('@')), |c| c.is_some())
+		.parse_complete(input)
+		.map_err(err_to_string)?;
 	let (input, name) = map(
 		take_while1(|v| v != ',' && v != '?' && v != '@'),
 		str::to_owned,
-	)(input)
+	).parse_complete(input)
 	.map_err(err_to_string)?;
 
 	let kw_item = separated_pair(
@@ -55,7 +57,7 @@ fn host_item_parser(input: &str) -> Result<HostItem, String> {
 	});
 	let mut opt_kw = map(opt(preceded(char('?'), kw)), Option::unwrap_or_default);
 
-	let (input, attrs) = opt_kw(input).map_err(err_to_string)?;
+	let (input, attrs) = opt_kw.parse_complete(input).map_err(err_to_string)?;
 
 	if !input.is_empty() {
 		return Err(format!("unexpected trailing input: {input:?}"));
@@ -68,7 +70,7 @@ fn host_item_parser(input: &str) -> Result<HostItem, String> {
 }
 
 // TODO: Rename to HostSelector
-#[derive(Parser, Clone)]
+#[derive(clap::Parser, Clone)]
 pub struct FleetOpts {
 	/// All hosts except those would be skipped
 	#[clap(long, number_of_values = 1, value_parser = host_item_parser)]

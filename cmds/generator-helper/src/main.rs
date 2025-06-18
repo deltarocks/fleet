@@ -11,10 +11,11 @@ use age::{
 };
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use clap::{Parser, ValueEnum};
+use ed25519_dalek::SecretKey;
 use fleet_shared::SecretData;
 use rand::{
-	distributions::{Alphanumeric, DistString, Distribution, Uniform},
-	thread_rng, RngCore,
+	distr::{Alphanumeric, Distribution, SampleString, Uniform},
+	rng, RngCore,
 };
 
 fn write_output_file(out: &str) -> Result<File> {
@@ -224,7 +225,7 @@ enum Opts {
 fn main() -> Result<()> {
 	let opts = Opts::parse();
 	// Assumed to be secure, seeded from secure OsRng+reseeded.
-	let mut rng = thread_rng();
+	let mut rng = rng();
 
 	match opts {
 		Opts::Public { output, encoding } => {
@@ -245,7 +246,10 @@ fn main() -> Result<()> {
 					use ed25519_dalek::SigningKey;
 
 					let recipients = load_identities()?;
-					let key = SigningKey::generate(&mut rng).to_keypair_bytes();
+					let mut secret = SecretKey::default();
+					rng.fill_bytes(&mut secret);
+					// TODO: Use SigningKey::generate after https://github.com/dalek-cryptography/curve25519-dalek/pull/762
+					let key = SigningKey::from_bytes(&secret).to_keypair_bytes();
 					write_public(&public, &key[32..], encoding)?;
 					write_private(
 						&recipients,
@@ -268,7 +272,8 @@ fn main() -> Result<()> {
 					use x25519_dalek::{PublicKey, StaticSecret};
 
 					let recipients = load_identities()?;
-					let key = StaticSecret::random_from_rng(rng);
+					// TODO: Use random_from_rng after https://github.com/dalek-cryptography/curve25519-dalek/pull/762
+					let key = StaticSecret::random();
 					let public_key: PublicKey = (&key).into();
 					write_public(&public, public_key.as_bytes().as_slice(), encoding)?;
 					write_private(&recipients, &private, key.as_bytes().as_slice(), encoding)?;
@@ -289,7 +294,8 @@ fn main() -> Result<()> {
 					} else {
 						// Alphabet of Alphanumberic + symbols
 						const GEN_ASCII_SYMBOLS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
-						let uniform = Uniform::new(0, GEN_ASCII_SYMBOLS.len());
+						let uniform =
+							Uniform::new(0, GEN_ASCII_SYMBOLS.len()).expect("range is valid");
 						(0..size)
 							.map(|_| uniform.sample(&mut rng))
 							.map(|i| GEN_ASCII_SYMBOLS[i] as char)
@@ -310,7 +316,9 @@ fn main() -> Result<()> {
 					let recipients = load_identities()?;
 					let mut bytes = vec![0u8; count];
 					if no_nuls {
-						let rand = Uniform::new_inclusive(0x1u8, 0xffu8).sample_iter(&mut rng);
+						let rand = Uniform::new_inclusive(0x1u8, 0xffu8)
+							.expect("range is valid")
+							.sample_iter(&mut rng);
 						for (byte, rand) in bytes.iter_mut().zip(rand) {
 							*byte = rand;
 						}

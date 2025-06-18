@@ -9,5 +9,5 @@ anyhow.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tokio.workspace = true
 
-async-trait = "0.1.81"
+async-trait = "0.1.88"
 tf-provider = "0.2.2"
