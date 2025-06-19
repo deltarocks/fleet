@@ -105,7 +105,7 @@ impl Handler for NixHandler {
 			let log: NixLog = match serde_json::from_str(e) {
 				Ok(l) => l,
 				Err(err) => {
-					warn!("failed to parse nix log line {:?}: {}", e, err);
+					warn!("failed to parse nix log line {e:?}: {err}");
 					return;
 				}
 			};
@@ -141,13 +141,13 @@ impl Handler for NixHandler {
 								drv = pkg;
 							}
 						}
-						info!(target: "nix","building {}", drv);
+						info!(target: "nix", "building {drv}");
 						let span = info_span!("build", drv);
 						#[cfg(feature = "indicatif")]
 						span.pb_start();
 						self.spans.insert(id, span);
 					} else {
-						warn!("bad build log: {:?}", log)
+						warn!("bad build log: {log:?}")
 					}
 				}
 				NixLog::Start {
@@ -168,13 +168,13 @@ impl Handler for NixHandler {
 								drv = pkg;
 							}
 						}
-						info!(target: "nix","copying {} {} -> {}", drv, from, to);
+						info!(target: "nix", "copying {drv} {from} -> {to}");
 						let span = info_span!("copy", from, to, drv);
 						#[cfg(feature = "indicatif")]
 						span.pb_start();
 						self.spans.insert(id, span);
 					} else {
-						warn!("bad copy log: {:?}", log)
+						warn!("bad copy log: {log:?}")
 					}
 				}
 				NixLog::Start { text, typ, id, .. }
@@ -193,7 +193,7 @@ impl Handler for NixHandler {
 							span.pb_set_message(&process_message(text.trim()));
 						}
 						self.spans.insert(id, span);
-						info!(target: "nix", "{}", text);
+						info!(target: "nix", "{text}");
 					}
 				}
 				NixLog::Start {
@@ -243,28 +243,28 @@ impl Handler for NixHandler {
 					id,
 					..
 				} if text.starts_with("waiting for lock on ") => {
-					let mut drv = text.strip_prefix("waiting for lock on ").unwrap();
-					if let Some(txt) = drv.strip_prefix("\u{1b}[35;1m'") {
-						drv = txt;
-					}
-					if let Some(txt) = drv.strip_suffix("'\u{1b}[0m") {
-						drv = txt;
-					}
-					if let Some(txt) = drv.split("', '").next() {
-						drv = txt;
-					}
-					if let Some(pkg) = drv.strip_prefix("/nix/store/") {
-						let mut it = pkg.splitn(2, '-');
-						it.next();
-						if let Some(pkg) = it.next() {
-							drv = pkg;
-						}
-					}
-					let span = info_span!("waiting on drv", drv);
+					let drv = strip_drv(text.strip_prefix("waiting for lock on ").unwrap());
+
+					let span = info_span!("waiting for lock on drv", drv);
 					#[cfg(feature = "indicatif")]
 					span.pb_start();
 					self.spans.insert(id, span);
 					// Concurrent build of the same message
+				}
+				NixLog::Start {
+					text,
+					level: 1,
+					fields,
+					typ: 111,
+					id,
+					..
+				} if text.starts_with("waiting for a free build user ID for ") && fields.is_empty() => {
+					let drv = strip_drv(text.strip_prefix("waiting for a free build user ID for ").unwrap());
+
+					let span = info_span!("waiting for a free build user ID on drv", drv);
+					#[cfg(feature = "indicatif")]
+					span.pb_start();
+					self.spans.insert(id, span);
 				}
 				NixLog::Stop { id, .. } => {
 					self.spans.remove(&id);
@@ -310,7 +310,7 @@ impl Handler for NixHandler {
 				NixLog::Result { typ, .. } if typ == 104 || typ == 106 => {
 					// Set phase, expected
 				}
-				_ => warn!("unknown log: {:?}", log),
+				log => warn!("unknown log: {log:?}"),
 			};
 		} else {
 			let e = e.trim();
@@ -320,4 +320,25 @@ impl Handler for NixHandler {
 			info!("{e}")
 		}
 	}
+}
+
+fn strip_drv(mut drv: &str) -> &str {
+	if let Some(txt) = drv.strip_prefix("\u{1b}[35;1m'") {
+		drv = txt;
+	}
+	if let Some(txt) = drv.strip_suffix("'\u{1b}[0m") {
+		drv = txt;
+	}
+	if let Some(txt) = drv.split("', '").next() {
+		drv = txt;
+	}
+	if let Some(pkg) = drv.strip_prefix("/nix/store/") {
+		let mut it = pkg.splitn(2, '-');
+		it.next();
+		if let Some(pkg) = it.next() {
+			drv = pkg;
+		}
+	}
+
+	drv
 }
