@@ -3,7 +3,7 @@ use std::time::Instant;
 use anyhow::bail;
 use tracing::{debug, warn};
 
-use crate::{nix_go_json, Value};
+use crate::{Value, nix_go_json};
 
 #[tracing::instrument(level = "info", skip(val))]
 pub async fn assert_warn(action: &str, val: &Value) -> anyhow::Result<()> {

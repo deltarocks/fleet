@@ -3,16 +3,16 @@ use std::{ffi::OsStr, num::ParseIntError, process::Stdio, sync::Arc};
 use better_command::{ClonableHandler, Handler, NixHandler, NoopHandler};
 use futures::StreamExt;
 use itertools::Itertools as _;
-use serde::{de::DeserializeOwned, Deserialize};
+use serde::{Deserialize, de::DeserializeOwned};
 use thiserror::Error;
 use tokio::{
 	io::AsyncWriteExt,
 	process::{ChildStderr, ChildStdin, ChildStdout, Command},
 	select,
-	sync::{mpsc, oneshot, Mutex},
+	sync::{Mutex, mpsc, oneshot},
 };
 use tokio_util::codec::{FramedRead, LinesCodec};
-use tracing::{debug, error, warn, Level};
+use tracing::{Level, debug, error, warn};
 
 #[derive(Error, Debug, Clone)]
 pub enum Error {

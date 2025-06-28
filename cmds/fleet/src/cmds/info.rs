@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use clap::Parser;
 use fleet_base::host::Config;
 use nix_eval::nix_go_json;

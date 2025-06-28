@@ -1,25 +1,25 @@
 use std::{
 	collections::{BTreeMap, BTreeSet, HashSet},
-	io::{self, stdin, stdout, Read, Write},
+	io::{self, Read, Write, stdin, stdout},
 	path::PathBuf,
 };
 
 use age::Recipient;
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use chrono::{DateTime, Utc};
 use clap::Parser;
 use fleet_base::{
-	fleetdata::{encrypt_secret_data, FleetSecret, FleetSecretPart, FleetSharedSecret},
+	fleetdata::{FleetSecret, FleetSecretPart, FleetSharedSecret, encrypt_secret_data},
 	host::Config,
 	opts::FleetOpts,
 };
 use fleet_shared::SecretData;
-use nix_eval::{nix_go, nix_go_json, NixBuildBatch, Value};
+use nix_eval::{NixBuildBatch, Value, nix_go, nix_go_json};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
 use tabled::{Table, Tabled};
 use tokio::fs::read;
-use tracing::{error, info, info_span, warn, Instrument};
+use tracing::{Instrument, error, info, info_span, warn};
 
 #[derive(Parser)]
 pub enum Secret {
@@ -187,7 +187,9 @@ async fn maybe_regenerate_shared_secret(
 		true
 	} else if set.difference(&expected_set).next().is_some() {
 		// TODO: Remove this warning for revokable secrets.
-		warn!("host was removed from secret owners, but until this host rebuild, the secret will still be stored on it.");
+		warn!(
+			"host was removed from secret owners, but until this host rebuild, the secret will still be stored on it."
+		);
 		nix_go_json!(field.regenerateOnOwnerRemoved)
 	} else if expected_set.difference(&set).next().is_some() {
 		nix_go_json!(field.regenerateOnOwnerAdded)
@@ -296,8 +298,8 @@ async fn generate_impure(
 	let out_parent = host.mktemp_dir().await?;
 	let out = format!("{out_parent}/out");
 
-	let mut gen = host.cmd(generator).await?;
-	gen.env("out", &out);
+	let mut r#gen = host.cmd(generator).await?;
+	r#gen.env("out", &out);
 	if on.is_none() {
 		// This path is local, thus we can feed `OsString` directly to env var... But I don't think that's necessary to handle.
 		let project_path: String = config
@@ -306,9 +308,9 @@ async fn generate_impure(
 			.into_os_string()
 			.into_string()
 			.map_err(|s| anyhow!("fleet project path is not utf-8: {s:?}"))?;
-		gen.env("FLEET_PROJECT", project_path);
+		r#gen.env("FLEET_PROJECT", project_path);
 	}
-	gen.run().await.context("impure generator")?;
+	r#gen.run().await.context("impure generator")?;
 
 	{
 		let marker = host.read_file_text(format!("{out}/marker")).await?;
@@ -510,7 +512,9 @@ fn parse_machines(
 	if !remove_machines.is_empty() {
 		// TODO: maybe force secret regeneration?
 		// Not that useful without revokation.
-		warn!("secret will not be regenerated for removed machines, and until host rebuild, they will still possess the ability to decode secret");
+		warn!(
+			"secret will not be regenerated for removed machines, and until host rebuild, they will still possess the ability to decode secret"
+		);
 	}
 	Ok(target_machines)
 }
@@ -596,7 +600,9 @@ impl Secret {
 				part: part_name,
 			} => {
 				if config.has_secret(&machine, &name) && !replace && !merge {
-					bail!("secret already defined.\nUse --replace to override, or --merge to add new parts to existing secret");
+					bail!(
+						"secret already defined.\nUse --replace to override, or --merge to add new parts to existing secret"
+					);
 				}
 
 				let mut out = if merge && !replace {

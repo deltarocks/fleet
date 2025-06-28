@@ -5,7 +5,7 @@ use std::{
 
 use r2d2::Pool;
 
-use crate::{session::NixSessionInner, Error, NixSession, Result};
+use crate::{Error, NixSession, Result, session::NixSessionInner};
 
 pub struct NixSessionPool(Pool<NixSessionPoolInner>);
 impl NixSessionPool {

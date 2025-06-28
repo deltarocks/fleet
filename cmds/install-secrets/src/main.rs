@@ -5,20 +5,20 @@ use std::{
 	iter,
 	os::unix::prelude::PermissionsExt,
 	path::{Path, PathBuf},
-	str::{from_utf8, FromStr},
+	str::{FromStr, from_utf8},
 };
 
 use age::{
-	ssh::{Identity as SshIdentity, Recipient as SshRecipient},
 	Decryptor, Encryptor, Identity, Recipient,
+	ssh::{Identity as SshIdentity, Recipient as SshRecipient},
 };
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use clap::Parser;
 use fleet_shared::SecretData;
-use nix::unistd::{chown, Group, User};
+use nix::unistd::{Group, User, chown};
 use serde::Deserialize;
 use tracing::{error, info, info_span};
-use tracing_subscriber::{filter::LevelFilter, EnvFilter};
+use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 
 #[derive(Parser)]
 #[clap(author)]

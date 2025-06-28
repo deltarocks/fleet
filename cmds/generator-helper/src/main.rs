@@ -1,21 +1,22 @@
 use std::{
 	env,
 	fs::{File, OpenOptions},
-	io::{self, copy, stdin, stdout, Read, Write},
+	io::{self, Read, Write, copy, stdin, stdout},
 	str::FromStr,
 };
 
 use age::{
-	ssh::{ParseRecipientKeyError, Recipient as SshRecipient},
 	Encryptor, Recipient,
+	ssh::{ParseRecipientKeyError, Recipient as SshRecipient},
 };
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use clap::{Parser, ValueEnum};
 use ed25519_dalek::SecretKey;
 use fleet_shared::SecretData;
 use rand::{
+	RngCore,
 	distr::{Alphanumeric, Distribution, SampleString, Uniform},
-	rng, RngCore,
+	rng,
 };
 
 fn write_output_file(out: &str) -> Result<File> {
@@ -78,7 +79,9 @@ fn load_identities() -> Result<Identities> {
 	let list = match list {
 		Ok(v) => v,
 		Err(env::VarError::NotPresent) => {
-			bail!("gh is only intended to be used from secret generator scripts, but if you really want to use it somewhere else - set GENERATOR_HELPER_IDENTITIES to list of newline-delimited ssh identities");
+			bail!(
+				"gh is only intended to be used from secret generator scripts, but if you really want to use it somewhere else - set GENERATOR_HELPER_IDENTITIES to list of newline-delimited ssh identities"
+			);
 		}
 		Err(e) => bail!("somehow, identities list is not utf-8: {e}"),
 	};
@@ -254,13 +257,7 @@ fn main() -> Result<()> {
 					write_private(
 						&recipients,
 						&private,
-						&key[..{
-							if no_embed_public {
-								32
-							} else {
-								64
-							}
-						}],
+						&key[..{ if no_embed_public { 32 } else { 64 } }],
 						encoding,
 					)?;
 				}

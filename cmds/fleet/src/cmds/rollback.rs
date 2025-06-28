@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use clap::Parser;
 use fleet_base::{
-	deploy::{deploy_task, upload_task, DeployAction},
+	deploy::{DeployAction, deploy_task, upload_task},
 	host::{Config, ConfigHost, Generation, GenerationStorage},
 	opts::FleetOpts,
 };

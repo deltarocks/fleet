@@ -10,14 +10,14 @@ use std::{
 	sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use fleet_shared::SecretData;
-use nix_eval::{nix_go, nix_go_json, util::assert_warn, NixSession, Value};
+use nix_eval::{NixSession, Value, nix_go, nix_go_json, util::assert_warn};
 use openssh::SessionBuilder;
 use serde::de::DeserializeOwned;
 use tabled::Tabled;
 use tempfile::NamedTempFile;
-use time::{format_description, UtcDateTime};
+use time::{UtcDateTime, format_description};
 use tracing::warn;
 
 use crate::{
@@ -87,7 +87,9 @@ impl FromStr for DeployKind {
 			"fleet" => Ok(Self::Fleet),
 			"nixos-install" => Ok(Self::NixosInstall),
 			"nixos-lustrate" => Ok(Self::NixosLustrate),
-			v => bail!("unknown deploy_kind: {v}; expected on of \"upgrade-to-fleet\", \"fleet\", \"nixos-install\", \"nixos-lustrate\""),
+			v => bail!(
+				"unknown deploy_kind: {v}; expected on of \"upgrade-to-fleet\", \"fleet\", \"nixos-install\", \"nixos-lustrate\""
+			),
 		}
 	}
 }
@@ -189,11 +191,11 @@ impl ConfigHost {
 			.map(|e| e.trim())
 			.filter(|&l| !l.is_empty())
 			.filter_map(|g| {
-				let gen = parse_generation_line(g);
-				if gen.is_none() {
+				let generation = parse_generation_line(g);
+				if generation.is_none() {
 					warn!("bad generation: {g}");
 				};
-				gen
+				generation
 			})
 			.collect::<Vec<_>>();
 		for ele in generations.iter_mut() {

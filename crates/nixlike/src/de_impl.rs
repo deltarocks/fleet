@@ -2,8 +2,8 @@ use std::convert::{TryFrom, TryInto};
 
 use linked_hash_map::LinkedHashMap;
 use serde::{
-	de::{self, MapAccess, SeqAccess},
 	Deserializer,
+	de::{self, MapAccess, SeqAccess},
 };
 
 use crate::{Error, Value};
@@ -28,11 +28,12 @@ impl<'de> MapAccess<'de> for ObjectAccess {
 	where
 		K: de::DeserializeSeed<'de>,
 	{
-		if let Some((k, v)) = self.iter.next() {
-			let _ = self.value.insert(v);
-			Ok(Some(seed.deserialize(Value::String(k))?))
-		} else {
-			Ok(None)
+		match self.iter.next() {
+			Some((k, v)) => {
+				let _ = self.value.insert(v);
+				Ok(Some(seed.deserialize(Value::String(k))?))
+			}
+			_ => Ok(None),
 		}
 	}
 
@@ -62,10 +63,9 @@ impl<'de> SeqAccess<'de> for ArrayAccess {
 	where
 		T: de::DeserializeSeed<'de>,
 	{
-		if let Some(v) = self.iter.next() {
-			Ok(Some(seed.deserialize(v)?))
-		} else {
-			Ok(None)
+		match self.iter.next() {
+			Some(v) => Ok(Some(seed.deserialize(v)?)),
+			_ => Ok(None),
 		}
 	}
 }

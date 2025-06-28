@@ -2,11 +2,11 @@ use std::convert::TryInto;
 
 use linked_hash_map::LinkedHashMap;
 use serde::{
+	Serializer,
 	ser::{
 		self, SerializeMap, SerializeSeq, SerializeStruct, SerializeStructVariant, SerializeTuple,
 		SerializeTupleStruct, SerializeTupleVariant,
 	},
-	Serializer,
 };
 
 use crate::{Error, Value};
@@ -90,9 +90,7 @@ impl SerializeTupleVariant for MySerializeSeqVariant {
 
 	fn end(self) -> Result<Self::Ok, Self::Error> {
 		Ok(Value::Object(
-			vec![(self.0, Value::Array(self.1 .0))]
-				.into_iter()
-				.collect(),
+			vec![(self.0, Value::Array(self.1.0))].into_iter().collect(),
 		))
 	}
 }

@@ -2,7 +2,7 @@
   description = "NixOS cluster configuration management";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/release-24.11";
+    nixpkgs.url = "github:nixos/nixpkgs/release-25.05";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -156,7 +156,7 @@
                 bacon
                 nil
                 rustPlatform.bindgenHook
-                nixVersions.nix_2_22
+                # nixVersions.nix_2_22
               ];
               environment.PROTOC = "${pkgs.protobuf}/bin/protoc";
             };

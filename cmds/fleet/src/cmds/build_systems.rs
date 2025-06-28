@@ -1,15 +1,15 @@
 use std::{env::current_dir, os::unix::fs::symlink, path::PathBuf};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use clap::Parser;
 use fleet_base::{
-	deploy::{deploy_task, upload_task, DeployAction},
+	deploy::{DeployAction, deploy_task, upload_task},
 	host::{Config, DeployKind, GenerationStorage},
 	opts::FleetOpts,
 };
-use nix_eval::{nix_go, NixBuildBatch};
+use nix_eval::{NixBuildBatch, nix_go};
 use tokio::task::LocalSet;
-use tracing::{error, field, info, info_span, warn, Instrument};
+use tracing::{Instrument, error, field, info, info_span, warn};
 
 #[derive(Parser)]
 pub struct Deploy {
@@ -167,11 +167,12 @@ impl Deploy {
 						self.action,
 						&host,
 						remote_path,
-						if let Ok(v) = opts.action_attr(&host, "specialisation").await {
-							v
-						} else {
-							error!("unreachable? failed to get specialization");
-							return;
+						match opts.action_attr(&host, "specialisation").await {
+							Ok(v) => v,
+							_ => {
+								error!("unreachable? failed to get specialization");
+								return;
+							}
 						},
 						disable_rollback,
 					)

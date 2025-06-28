@@ -1,6 +1,6 @@
 use std::{ffi::OsStr, pin, process::Stdio, sync::Arc, task::Poll};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use better_command::{Handler, NixHandler, PlainHandler};
 use futures::StreamExt;
 use itertools::Either;
@@ -68,10 +68,9 @@ impl MyCommand {
 		}
 	}
 	fn new_here(&self, cmd: impl AsRef<OsStr>) -> Self {
-		if let Some(ssh_session) = self.ssh_session.clone() {
-			Self::new_on(self.escalation, cmd, ssh_session)
-		} else {
-			Self::new(self.escalation, cmd)
+		match self.ssh_session.clone() {
+			Some(ssh_session) => Self::new_on(self.escalation, cmd, ssh_session),
+			_ => Self::new(self.escalation, cmd),
 		}
 	}
 
@@ -139,15 +138,18 @@ impl MyCommand {
 		out
 	}
 	fn into_command(self) -> Result<Either<Command, openssh::OwningCommand<Arc<Session>>>> {
-		Ok(if let Some(session) = self.ssh_session.clone() {
-			let cmd = self.translate_env_into_env().into_command_unchecked_local();
-			Either::Right(
-				cmd.over_ssh(session)
-					.map_err(|e| anyhow!("ssh error: {e}"))?,
-			)
-		} else {
-			let cmd = self.into_command_unchecked_local();
-			Either::Left(cmd)
+		Ok(match self.ssh_session.clone() {
+			Some(session) => {
+				let cmd = self.translate_env_into_env().into_command_unchecked_local();
+				Either::Right(
+					cmd.over_ssh(session)
+						.map_err(|e| anyhow!("ssh error: {e}"))?,
+				)
+			}
+			_ => {
+				let cmd = self.into_command_unchecked_local();
+				Either::Left(cmd)
+			}
 		})
 	}
 	pub fn arg(&mut self, arg: impl AsRef<OsStr>) -> &mut Self {

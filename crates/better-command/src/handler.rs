@@ -7,7 +7,7 @@ use std::{
 
 use regex::Regex;
 use serde::Deserialize;
-use tracing::{info, info_span, warn, Span};
+use tracing::{Span, info, info_span, warn};
 #[cfg(feature = "indicatif")]
 use tracing_indicatif::span_ext::IndicatifSpanExt as _;
 
@@ -112,9 +112,13 @@ impl Handler for NixHandler {
 			match log {
 				NixLog::Msg { msg, raw_msg, .. } => {
 					#[allow(clippy::nonminimal_bool)]
-					if !(msg.starts_with("\u{1b}[35;1mwarning:\u{1b}[0m Git tree '") && msg.ends_with("' is dirty"))
-					&& !msg.starts_with("\u{1b}[35;1mwarning:\u{1b}[0m not writing modified lock file of flake")
-					&& msg != "\u{1b}[35;1mwarning:\u{1b}[0m \u{1b}[31;1merror:\u{1b}[0m SQLite database '\u{1b}[35;1m/nix/var/nix/db/db.sqlite\u{1b}[0m' is busy" {
+					if !(msg.starts_with("\u{1b}[35;1mwarning:\u{1b}[0m Git tree '")
+						&& msg.ends_with("' is dirty"))
+						&& !msg.starts_with(
+							"\u{1b}[35;1mwarning:\u{1b}[0m not writing modified lock file of flake",
+						) && msg
+						!= "\u{1b}[35;1mwarning:\u{1b}[0m \u{1b}[31;1merror:\u{1b}[0m SQLite database '\u{1b}[35;1m/nix/var/nix/db/db.sqlite\u{1b}[0m' is busy"
+					{
 						if let Some(raw_msg) = raw_msg {
 							if !msg.is_empty() {
 								info!(target: "nix", "{}\n{}", raw_msg.trim_end(), msg.trim_end())
@@ -156,8 +160,12 @@ impl Handler for NixHandler {
 					id,
 					..
 				} if typ == 100 && fields.len() >= 3 => {
-					if let [LogField::String(drv), LogField::String(from), LogField::String(to), ..] =
-						&fields[..]
+					if let [
+						LogField::String(drv),
+						LogField::String(from),
+						LogField::String(to),
+						..,
+					] = &fields[..]
 					{
 						let mut drv = drv.as_str();
 
@@ -289,8 +297,12 @@ impl Handler for NixHandler {
 				}
 				NixLog::Result { fields, id, typ } if typ == 105 && fields.len() >= 4 => {
 					if let Some(span) = self.spans.get(&id) {
-						if let [LogField::Num(done), LogField::Num(expected), LogField::Num(_running), LogField::Num(_failed)] =
-							&fields[..4]
+						if let [
+							LogField::Num(done),
+							LogField::Num(expected),
+							LogField::Num(_running),
+							LogField::Num(_failed),
+						] = &fields[..4]
 						{
 							#[cfg(feature = "indicatif")]
 							{

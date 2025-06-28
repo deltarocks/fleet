@@ -6,27 +6,27 @@ pub(crate) mod extra_args;
 
 use std::{ffi::OsString, process::ExitCode};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use clap::{CommandFactory, Parser};
 use cmds::{
 	build_systems::{BuildSystems, Deploy},
-	rollback::RollbackSingle,
 	complete::Complete,
 	info::Info,
+	rollback::RollbackSingle,
 	secrets::Secret,
 	tf::Tf,
 };
 use fleet_base::{host::Config, opts::FleetOpts};
-use futures::{future::LocalBoxFuture, stream::FuturesUnordered, TryStreamExt};
+use futures::{TryStreamExt, future::LocalBoxFuture, stream::FuturesUnordered};
 // use host::Config;
 #[cfg(feature = "indicatif")]
 use human_repr::HumanCount;
 #[cfg(feature = "indicatif")]
 use indicatif::{ProgressState, ProgressStyle};
-use tracing::{error, info, info_span, Instrument};
+use tracing::{Instrument, error, info, info_span};
 #[cfg(feature = "indicatif")]
 use tracing_indicatif::IndicatifLayer;
-use tracing_subscriber::{prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, prelude::*};
 
 #[derive(Parser)]
 struct Prefetch {}

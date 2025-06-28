@@ -3,8 +3,8 @@ use std::{
 	str::FromStr,
 };
 
-use base64::engine::{general_purpose::STANDARD_NO_PAD, Engine};
-use serde::{de::Error, Deserialize, Deserializer, Serialize};
+use base64::engine::{Engine, general_purpose::STANDARD_NO_PAD};
+use serde::{Deserialize, Deserializer, Serialize, de::Error};
 use unicode_categories::UnicodeCategories;
 
 #[derive(Debug, PartialEq, Clone)]

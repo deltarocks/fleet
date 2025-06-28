@@ -6,15 +6,15 @@ use std::{
 	sync::{Arc, Mutex},
 };
 
-use anyhow::{bail, Context, Result};
-use nix_eval::{nix_go, util::assert_warn, NixSessionPool, Value};
+use anyhow::{Context, Result, bail};
+use nix_eval::{NixSessionPool, Value, nix_go, util::assert_warn};
 use nom::{
+	Parser,
 	bytes::complete::take_while1,
 	character::complete::char,
 	combinator::{map, opt},
 	multi::separated_list1,
 	sequence::{preceded, separated_pair},
-	Parser,
 };
 
 use crate::{
@@ -44,7 +44,8 @@ fn host_item_parser(input: &str) -> Result<HostItem, String> {
 	let (input, name) = map(
 		take_while1(|v| v != ',' && v != '?' && v != '@'),
 		str::to_owned,
-	).parse_complete(input)
+	)
+	.parse_complete(input)
 	.map_err(err_to_string)?;
 
 	let kw_item = separated_pair(

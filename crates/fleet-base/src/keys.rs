@@ -1,7 +1,7 @@
 use std::str::FromStr as _;
 
 use age::Recipient;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use futures::{StreamExt as _, TryStreamExt as _};
 use itertools::Itertools as _;
 use tracing::warn;
@@ -39,12 +39,12 @@ impl Config {
 		}
 	}
 	/// Insecure, requires root
-	pub async fn recipient(&self, host: &str) -> anyhow::Result<impl Recipient> {
+	pub async fn recipient(&self, host: &str) -> anyhow::Result<impl Recipient + use<>> {
 		let key = self.key(host).await?;
 		age::ssh::Recipient::from_str(&key).map_err(|e| anyhow!("parse recipient error: {:?}", e))
 	}
 
-	pub async fn recipients(&self, hosts: Vec<String>) -> Result<Vec<impl Recipient>> {
+	pub async fn recipients(&self, hosts: Vec<String>) -> Result<Vec<impl Recipient + use<>>> {
 		let hosts = self.expand_owner_set(hosts).await?;
 		futures::stream::iter(hosts.iter())
 			.then(|m| self.recipient(m.as_ref()))

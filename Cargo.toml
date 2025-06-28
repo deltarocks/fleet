@@ -2,8 +2,8 @@
 members = ["crates/*", "cmds/*"]
 resolver = "2"
 package.version = "0.1.0"
-package.edition = "2021"
-package.rust-version = "1.82.0"
+package.edition = "2024"
+package.rust-version = "1.86.0"
 
 [workspace.dependencies]
 better-command = { path = "./crates/better-command" }

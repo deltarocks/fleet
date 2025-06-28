@@ -10,7 +10,7 @@ use rand::{
 	distr::{Alphanumeric, SampleString as _},
 	rng,
 };
-use serde::{de::Error, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::Error};
 use serde_json::Value;
 
 #[derive(Serialize, Deserialize, Default)]

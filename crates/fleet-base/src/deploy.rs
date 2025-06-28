@@ -1,10 +1,10 @@
 use std::{path::PathBuf, time::Duration};
 
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow, bail};
 use clap::ValueEnum;
 use itertools::Itertools;
 use tokio::time::sleep;
-use tracing::{error, info, info_span, warn, Instrument as _};
+use tracing::{Instrument as _, error, info, info_span, warn};
 
 use crate::host::{Config, ConfigHost, DeployKind, Generation, GenerationStorage};
 
@@ -221,7 +221,9 @@ pub async fn deploy_task(
 					.in_current_span()
 					.await
 				{
-					error!("failed to remove rollback marker. This is bad, as the system will be rolled back by watchdog: {e}")
+					error!(
+						"failed to remove rollback marker. This is bad, as the system will be rolled back by watchdog: {e}"
+					)
 				}
 			}
 			info!("disarming watchdog, just in case");
@@ -233,12 +235,17 @@ pub async fn deploy_task(
 					error!("failed to disarm rollback run: {e}");
 				}
 			}
-		} else if let Err(_e) = host
-			.rm_file("/etc/fleet_rollback_marker", true)
-			.in_current_span()
-			.await
-		{
-			// Marker might not exist, yet better try to remove it.
+		} else {
+			match host
+				.rm_file("/etc/fleet_rollback_marker", true)
+				.in_current_span()
+				.await
+			{
+				Err(_e) => {
+					// Marker might not exist, yet better try to remove it.
+				}
+				_ => {}
+			}
 		}
 	}
 	Ok(())

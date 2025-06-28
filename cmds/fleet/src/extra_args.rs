@@ -1,6 +1,6 @@
 use std::ffi::{OsStr, OsString};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 pub fn parse_os(os: &OsStr) -> Result<Vec<OsString>> {
 	Ok(shlex::bytes::split(os.as_encoded_bytes())

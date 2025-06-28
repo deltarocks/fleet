@@ -1,9 +1,9 @@
 use std::{collections::HashMap, fmt, path::PathBuf, sync::Arc};
 
 use better_command::NixHandler;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
-use crate::{macros::NixExprBuilder, nix_go, Error, NixBuildBatch, NixSession, Result};
+use crate::{Error, NixBuildBatch, NixSession, Result, macros::NixExprBuilder, nix_go};
 
 #[derive(Clone)]
 pub enum Index {
