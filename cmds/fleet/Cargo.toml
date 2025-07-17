@@ -48,7 +48,7 @@ nom = "8.0.0"
 tracing-indicatif = { version = "0.3", optional = true }
 
 [features]
-default = ["indicatif"]
+default = []
 # Not quite stable
 indicatif = [
 	"dep:tracing-indicatif",
