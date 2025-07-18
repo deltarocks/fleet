@@ -138,7 +138,7 @@ pub grammar nixlike() for str {
 					}
 				}
 
-				let key = k.into_iter().last().unwrap();
+				let key = k.into_iter().next_back().unwrap();
 				if map.contains_key(&key) {
 					return Err("can't override object");
 				}

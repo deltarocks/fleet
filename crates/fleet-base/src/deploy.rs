@@ -235,17 +235,12 @@ pub async fn deploy_task(
 					error!("failed to disarm rollback run: {e}");
 				}
 			}
-		} else {
-			match host
-				.rm_file("/etc/fleet_rollback_marker", true)
-				.in_current_span()
-				.await
-			{
-				Err(_e) => {
-					// Marker might not exist, yet better try to remove it.
-				}
-				_ => {}
-			}
+		} else if let Err(_e) = host
+			.rm_file("/etc/fleet_rollback_marker", true)
+			.in_current_span()
+			.await
+		{
+			// Marker might not exist, yet better try to remove it.
 		}
 	}
 	Ok(())

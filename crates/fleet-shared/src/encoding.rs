@@ -51,10 +51,10 @@ impl FromStr for SecretData {
 		};
 		let data = if let Some(unprefixed) = string.strip_prefix(BASE64_ENCODED_PREFIX) {
 			STANDARD_NO_PAD
-				.decode(unprefixed.replace(|v| matches!(v, '\n' | '\t' | ' '), ""))
+				.decode(unprefixed.replace(['\n', '\t', ' '], ""))
 				.map_err(|e| format!("base64-encoded failed: {e}"))?
 		} else if let Some(unprefixed) = string.strip_prefix(Z85_ENCODED_PREFIX) {
-			z85::decode(unprefixed.replace(|v| matches!(v, '\n' | '\t' | ' '), ""))
+			z85::decode(unprefixed.replace(['\n', '\t', ' '], ""))
 				.map_err(|e| format!("z85-encoded failed: {e}"))?
 		} else if let Some(unprefixed) = string.strip_prefix(PLAINTEXT_NEWLINE_PREFIX) {
 			unprefixed.as_bytes().to_owned()

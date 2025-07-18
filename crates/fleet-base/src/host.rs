@@ -214,13 +214,11 @@ impl ConfigHost {
 	pub fn set_session_destination(&self, dest: String) {
 		self.session_destination
 			.set(dest)
-			.ok()
 			.expect("session destination is already set")
 	}
 	pub fn set_deploy_kind(&self, kind: DeployKind) {
 		self.deploy_kind
 			.set(kind)
-			.ok()
 			.expect("deploy kind is already set");
 	}
 	pub async fn deploy_kind(&self) -> Result<DeployKind> {
@@ -568,6 +566,7 @@ impl Config {
 			local: true,
 			session: OnceLock::new(),
 			deploy_kind: OnceCell::new(),
+			session_destination: OnceCell::new(),
 		}
 	}
 
@@ -588,6 +587,7 @@ impl Config {
 			local: self.localhost == name,
 			session: OnceLock::new(),
 			deploy_kind: OnceCell::new(),
+			session_destination: OnceCell::new(),
 		})
 	}
 	pub async fn list_hosts(&self) -> Result<Vec<ConfigHost>> {
