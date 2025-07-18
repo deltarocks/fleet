@@ -98,7 +98,9 @@ pub struct ConfigHost {
 	pub name: String,
 	groups: OnceCell<Vec<String>>,
 
+	// TODO: Both of those values are taken from host opts, there should be a cleaner way to specify it
 	deploy_kind: OnceCell<DeployKind>,
+	session_destination: OnceCell<String>,
 
 	pub host_config: Option<Value>,
 	pub nixos_config: OnceCell<Value>,
@@ -209,6 +211,12 @@ impl ConfigHost {
 		Ok(generations)
 	}
 
+	pub fn set_session_destination(&self, dest: String) {
+		self.session_destination
+			.set(dest)
+			.ok()
+			.expect("session destination is already set")
+	}
 	pub fn set_deploy_kind(&self, kind: DeployKind) {
 		self.deploy_kind
 			.set(kind)
@@ -217,7 +225,7 @@ impl ConfigHost {
 	}
 	pub async fn deploy_kind(&self) -> Result<DeployKind> {
 		if let Some(kind) = self.deploy_kind.get() {
-			return Ok(kind.clone());
+			return Ok(*kind);
 		}
 		let is_fleet_managed = match self.file_exists("/etc/FLEET_HOST").await {
 			Ok(v) => v,
@@ -237,11 +245,7 @@ impl ConfigHost {
 		}
 		// TOCTOU is possible
 		let _ = self.deploy_kind.set(DeployKind::Fleet);
-		Ok(self
-			.deploy_kind
-			.get()
-			.expect("deploy kind is just set")
-			.clone())
+		Ok(*self.deploy_kind.get().expect("deploy kind is just set"))
 	}
 	pub async fn escalation_strategy(&self) -> Result<EscalationStrategy> {
 		// Prefer sudo, as run0 has some gotchas with polkit
@@ -261,8 +265,10 @@ impl ConfigHost {
 			return Ok((*session).clone());
 		};
 		let session = SessionBuilder::default();
+
+		let dest = self.session_destination.get().unwrap_or(&self.name);
 		let session = session
-			.connect(&self.name)
+			.connect(&dest)
 			.await
 			.map_err(|e| anyhow!("ssh error while connecting to {}: {e:#?}", self.name))?;
 		let session = Arc::new(session);
@@ -281,7 +287,7 @@ impl ConfigHost {
 			.arg("test -e \"$1\" && echo true || echo false")
 			.arg("_")
 			.arg(path);
-		Ok(cmd.run_value().await?)
+		cmd.run_value().await
 	}
 	pub async fn read_file_bin(&self, path: impl AsRef<OsStr>) -> Result<Vec<u8>> {
 		let mut cmd = self.cmd("cat").await?;

@@ -125,6 +125,9 @@ impl Deploy {
 			if let Some(deploy_kind) = opts.action_attr::<DeployKind>(&host, "deploy_kind").await? {
 				host.set_deploy_kind(deploy_kind);
 			};
+			if let Some(destination) = opts.action_attr::<String>(&host, "dest").await? {
+				host.set_session_destination(destination);
+			};
 
 			set.spawn_local(
 				(async move {
