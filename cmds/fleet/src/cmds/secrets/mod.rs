@@ -23,6 +23,7 @@ use tracing::{Instrument, error, info, info_span, warn};
 
 #[derive(Parser)]
 pub enum Secret {
+	AddManager,
 	/// Force load host keys for all defined hosts
 	ForceKeys,
 	/// Add secret, data should be provided in stdin
@@ -521,6 +522,9 @@ fn parse_machines(
 impl Secret {
 	pub async fn run(self, config: &Config, opts: &FleetOpts) -> Result<()> {
 		match self {
+			Secret::AddManager => {
+				todo!("part of fleet-pusher")
+			}
 			Secret::ForceKeys => {
 				for host in config.list_hosts().await? {
 					if opts.should_skip(&host).await? {

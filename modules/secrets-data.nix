@@ -94,12 +94,28 @@ let
     };
     config = { };
   };
+  managerKey = {
+    options = {
+      name = mkOption {
+        type = str;
+        description = "Who does this manager key belongs to.";
+      };
+      key = mkOption {
+        type = str;
+        description = "Age-compatible key";
+      };
+    };
+    config = {};
+  };
 in
 {
   options.data = mkDataOption (
     { config, ... }:
     {
       options = {
+        managerKeys = mkOption {
+          type = listOf (submodule managerKey);
+        };
         sharedSecrets = mkOption {
           type = attrsOf (submodule sharedSecretData);
           default = { };

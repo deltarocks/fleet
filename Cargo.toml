@@ -11,7 +11,7 @@ fleet-shared = { path = "./crates/fleet-shared" }
 nix-eval = { path = "./crates/nix-eval" }
 nixlike = { path = "./crates/nixlike" }
 
-age = { version = "0.11", features = ["ssh"] }
+age = { version = "0.11", features = ["ssh", "plugin"] }
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete = "4.5"

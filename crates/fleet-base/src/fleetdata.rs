@@ -53,10 +53,20 @@ fn generate_gc_prefix() -> String {
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ManagerKey {
+	pub name: String,
+	pub key: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FleetData {
 	pub version: FleetDataVersion,
 	#[serde(default = "generate_gc_prefix")]
 	pub gc_root_prefix: String,
+
+	#[serde(default)]
+	pub manager_keys: Vec<ManagerKey>,
 
 	#[serde(default)]
 	pub hosts: BTreeMap<String, HostData>,
