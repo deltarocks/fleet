@@ -16,12 +16,17 @@ tokio = { workspace = true, features = ["io-util", "process"] }
 tokio-util.workspace = true
 tracing.workspace = true
 
+cxx = "1.0.168"
 futures = "0.3.31"
 itertools = "0.14.0"
 r2d2 = "0.8.10"
 regex = "1.11.1"
+test-log = { version = "0.2.18", features = ["trace"] }
 unindent = "0.2.4"
+tracing-indicatif = "0.3.13"
+ctor = "0.5.0"
 
-# [build-dependencies]
-# bindgen = "0.69.4"
-# pkg-config = "0.3.30"
+[build-dependencies]
+bindgen = "0.72.0"
+cxx-build = "1.0.168"
+pkg-config = "0.3.30"

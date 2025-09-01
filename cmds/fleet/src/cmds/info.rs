@@ -38,7 +38,8 @@ impl Info {
 				'host: for host in config.list_hosts().await? {
 					if !tagged.is_empty() {
 						let config = &config.config_field;
-						let tags: Vec<String> = nix_go_json!(config.hosts[{ host.name }].tags);
+						let host_name = &host.name;
+						let tags: Vec<String> = nix_go_json!(config.hosts[host_name].tags);
 						for tag in tagged {
 							if !tags.contains(tag) {
 								continue 'host;

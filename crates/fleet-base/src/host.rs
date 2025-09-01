@@ -12,7 +12,7 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use fleet_shared::SecretData;
-use nix_eval::{NixSession, Value, nix_go, nix_go_json, util::assert_warn};
+use nix_eval::{Value, nix_go, nix_go_json, util::assert_warn};
 use openssh::SessionBuilder;
 use serde::de::DeserializeOwned;
 use tabled::Tabled;
@@ -41,8 +41,6 @@ pub struct FleetConfigInternals {
 	pub default_pkgs: Value,
 	/// inputs.nixpkgs
 	pub nixpkgs: Value,
-
-	pub nix_session: NixSession,
 }
 
 // TODO: Make field not pub
@@ -232,14 +230,17 @@ impl ConfigHost {
 			}
 		};
 		if !is_fleet_managed {
-			bail!(indoc::indoc! {"
+			bail!(
+				"{}",
+				indoc::indoc! {"
 				host is not marked as managed by fleet
 				if you're not trying to lustrate/install system from scratch,
 				you should either
 					1. manually create /etc/FLEET_HOST file on the target host,
 					2. use ?deploy_kind=fleet host argument if you're upgrading from older version of fleet
 					3. use ?deploy_kind=upgrade_to_fleet if you're upgrading from plain nixos to fleet-managed nixos
-			"});
+			"}
+			);
 		}
 		// TOCTOU is possible
 		let _ = self.deploy_kind.set(DeployKind::Fleet);
@@ -503,8 +504,8 @@ impl ConfigHost {
 		let nixos = self.nixos_unchecked_config().await?;
 		let secrets = nix_go!(nixos.secrets);
 		let mut out = Vec::new();
-		for name in secrets.list_fields().await? {
-			let secret = nix_go!(secrets[{ name }]);
+		for name in secrets.list_fields()? {
+			let secret = secrets.get_field(&name)?;
 			let is_shared: bool = nix_go_json!(secret.shared);
 			if is_shared {
 				continue;
@@ -592,7 +593,7 @@ impl Config {
 	}
 	pub async fn list_hosts(&self) -> Result<Vec<ConfigHost>> {
 		let config = &self.config_field;
-		let names = nix_go!(config.hosts).list_fields().await?;
+		let names = nix_go!(config.hosts).list_fields()?;
 		let mut out = vec![];
 		for name in names {
 			out.push(self.host(&name).await?);
@@ -608,7 +609,7 @@ impl Config {
 	/// Shared secrets configured in fleet.nix or in flake
 	pub async fn list_configured_shared(&self) -> Result<Vec<String>> {
 		let config_field = &self.config_field;
-		Ok(nix_go!(config_field.sharedSecrets).list_fields().await?)
+		nix_go!(config_field.sharedSecrets).list_fields()
 	}
 	/// Shared secrets configured in fleet.nix
 	pub fn list_shared(&self) -> Vec<String> {
@@ -680,10 +681,10 @@ impl Config {
 	// maybe it can be a .nix file for persistence, but accessible only
 	// thru some shared state controller? Might it be stored in terraform
 	// state provider?
-	pub fn data(&self) -> MutexGuard<FleetData> {
+	pub fn data(&'_ self) -> MutexGuard<'_, FleetData> {
 		self.data.lock().unwrap()
 	}
-	pub fn data_mut(&self) -> MutexGuard<FleetData> {
+	pub fn data_mut(&'_ self) -> MutexGuard<'_, FleetData> {
 		self.data.lock().unwrap()
 	}
 	pub fn save(&self) -> Result<()> {
@@ -691,8 +692,7 @@ impl Config {
 		let data = nixlike::serialize(&self.data() as &FleetData)?;
 		tempfile.write_all(
 			format!(
-				"# This file contains fleet state and shouldn't be edited by hand\n\n{}\n\n# vim: ts=2 et nowrap\n",
-				data
+				"# This file contains fleet state and shouldn't be edited by hand\n\n{data}\n\n# vim: ts=2 et nowrap\n"
 			)
 			.as_bytes(),
 		)?;

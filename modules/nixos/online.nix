@@ -80,7 +80,8 @@ in
       '';
       supportsDryActivation = true;
     };
-  } // config.system.onlineActivationScripts;
+  }
+  // config.system.onlineActivationScripts;
 
   config.systemd.services = mkIf config.networking.networkmanager.enable {
     # If machine is managed by fleet, we should not restart NetworkManager during activation,

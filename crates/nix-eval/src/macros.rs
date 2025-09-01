@@ -1,171 +1,26 @@
-use serde::Serialize;
-
-use crate::{NixSession, Value};
-
-#[derive(Clone)]
-pub struct NixExprBuilder {
-	pub(crate) out: String,
-	used_fields: Vec<Value>,
-}
-pub trait AttrSetValue {
-	fn to_builder(self) -> NixExprBuilder;
-}
-trait Primitive {}
-
-macro_rules! impl_primitive {
-	($($t:ty),+) => {
-			$(
-				impl Primitive for $t {}
-			)+
-	};
-}
-impl_primitive!(String, bool, &'static str);
-
-impl<T> AttrSetValue for T
-where
-	// Limited by Primitive trait to avoid orphan rules violation with Vec<T: AttrSetValue>
-	T: Serialize + Primitive,
-{
-	fn to_builder(self) -> NixExprBuilder {
-		let serialized = nixlike::serialize(self).expect("invalid value for apply");
-		NixExprBuilder {
-			out: serialized.trim_end().to_owned(),
-			used_fields: Vec::new(),
-		}
-	}
-}
-impl AttrSetValue for Value {
-	fn to_builder(self) -> NixExprBuilder {
-		NixExprBuilder {
-			out: format!("sess_field_{}", self.session_field_id()),
-			used_fields: vec![self],
-		}
-	}
-}
-impl<T> AttrSetValue for Vec<T>
-where
-	T: AttrSetValue,
-{
-	fn to_builder(self) -> NixExprBuilder {
-		let mut builder = NixExprBuilder::list();
-		for v in self {
-			builder.list_value(NixExprBuilder::attrset_value(v));
-		}
-		builder.list_end();
-		builder
-	}
-}
-
-impl NixExprBuilder {
-	pub fn object() -> Self {
-		NixExprBuilder {
-			out: "{ ".to_owned(),
-			used_fields: Vec::new(),
-		}
-	}
-	pub fn list() -> Self {
-		NixExprBuilder {
-			out: "[".to_owned(),
-			used_fields: Vec::new(),
-		}
-	}
-	pub fn string(s: &str) -> Self {
-		NixExprBuilder {
-			out: nixlike::serialize(s)
-				.expect("no problems with serializing_string")
-				.trim_end()
-				.to_owned(),
-			used_fields: Vec::new(),
-		}
-	}
-	pub fn attrset_value(v: impl AttrSetValue) -> Self {
-		v.to_builder()
-	}
-	pub fn serialized(v: impl Serialize) -> Self {
-		let serialized = nixlike::serialize(v).expect("invalid value for apply");
-		Self {
-			out: serialized.trim_end().to_owned(),
-			used_fields: Vec::new(),
-		}
-	}
-	pub fn value(f: Value) -> Self {
-		Self {
-			out: format!("sess_field_{}", f.session_field_id()),
-			used_fields: vec![f],
-		}
-	}
-	pub fn end_obj(&mut self) {
-		self.out.push('}');
-	}
-	pub fn obj_key(&mut self, name: Self, value: Self) {
-		self.out.push_str(r#""${"#);
-		self.extend(name);
-		self.out.push_str(r#"}" = "#);
-		self.extend(value);
-		self.out.push_str("; ");
-	}
-	pub fn list_value(&mut self, value: Self) {
-		self.extend(value);
-		self.out.push(' ');
-	}
-	pub fn list_end(&mut self) {
-		self.out.push(']');
-	}
-
-	pub fn extend(&mut self, e: Self) {
-		self.out.push_str(&e.out);
-		self.used_fields.extend(e.used_fields);
-	}
-
-	#[allow(dead_code)]
-	pub fn session(&self) -> NixSession {
-		let mut session = None;
-		for ele in &self.used_fields {
-			if session.is_none() {
-				session = Some(ele.session());
-				continue;
-			}
-			let session = session.as_ref().expect("checked");
-			let ele_sess = ele.session();
-			assert!(
-				NixSession::ptr_eq(session, &ele_sess),
-				"can't mix fields from different session"
-			);
-		}
-		session.expect("expr without fields used")
-	}
-	#[allow(dead_code)]
-	pub fn index_attr(&mut self, s: &str) {
-		let escaped = nixlike::serialize(s).expect("string");
-		self.out.push('.');
-		self.out.push_str(escaped.trim_end());
-	}
-}
-
 #[macro_export]
 macro_rules! nix_expr_inner {
 	//(@munch_object FIXME: value should be arbitrary nix_expr_inner input... Time to write proc-macro?
 	(@obj($o:ident) $field:ident$(, $($tt:tt)*)?) => {{
-		$o.obj_key(
-			NixExprBuilder::string(stringify!($field)),
-			NixExprBuilder::attrset_value($field),
+		$o.insert(
+			stringify!($field),
+			$crate::Value::from($field),
 		);
 		$(nix_expr_inner!(@obj($o) $($tt)*);)?
 	}};
 	(@obj($o:ident) $field:ident: $v:expr$(, $($tt:tt)*)?) => {{
-		$o.obj_key(
-			NixExprBuilder::string(stringify!($field)),
-			NixExprBuilder::attrset_value($v),
+		$o.insert(
+			stringify!($field),
+			$crate::Value::from($v),
 		);
 		$(nix_expr_inner!(@obj($o) $($tt)*);)?
 	}};
 	(@obj($o:ident)) => {{}};
 	(Obj { $($tt:tt)* }) => {{
-		use $crate::{macros::NixExprBuilder, nix_expr_inner};
-		let mut out = NixExprBuilder::object();
+		use $crate::{nix_expr_inner};
+		let mut out = std::collections::hash_map::HashMap::new();
 		nix_expr_inner!(@obj(out) $($tt)*);
-		out.end_obj();
-		out
+		Value::new_attrs(out)?
 	}};
 	(@field($o:ident) . $var:ident $($tt:tt)*) => {{
 		$o.index_attr(stringify!($var));
@@ -185,10 +40,10 @@ macro_rules! nix_expr_inner {
 	};
 	(@field($o:ident)) => {};
 	($field:ident $($tt:tt)*) => {{
-		use $crate::{macros::NixExprBuilder, nix_expr_inner};
+		use $crate::{nix_expr_inner};
 		// might be used if indexed
 		#[allow(unused_mut)]
-		let mut out = NixExprBuilder::value($field.clone());
+		let mut out = $field.clone();
 		nix_expr_inner!(@field(out) $($tt)*);
 		out
 	}};
@@ -197,8 +52,7 @@ macro_rules! nix_expr_inner {
 		NixExprBuilder::string($v)
 	}};
 	({$v:expr}) => {{
-		use $crate::macros::NixExprBuilder;
-		NixExprBuilder::serialized(&$v)
+		$crate::Value::serialized(&$v)?
 	}}
 }
 #[macro_export]
@@ -212,40 +66,25 @@ macro_rules! nix_expr {
 
 #[macro_export]
 macro_rules! nix_go {
-	(@o($o:ident) . $var:ident $($tt:tt)*) => {{
-		$o.push(Index::attr(stringify!($var)));
-		nix_go!(@o($o) $($tt)*);
+	(@o($o:expr) . $var:ident $($tt:tt)*) => {{
+		nix_go!(@o($o.get_field(stringify!($var))?) $($tt)*)
 	}};
-	(@o($o:ident) [{ $v:expr }] $($tt:tt)*) => {{
-		$o.push(Index::attr(&$v));
-		nix_go!(@o($o) $($tt)*);
+	(@o($o:expr) [ $v:expr ] $($tt:tt)*) => {{
+		nix_go!(@o($o.get_field($v)?) $($tt)*)
 	}};
-	(@o($o:ident) [ $($var:tt)+ ] $($tt:tt)*) => {{
-		$o.push(Index::Expr($crate::nix_expr_inner!($($var)+)));
-		nix_go!(@o($o) $($tt)*);
-	}};
-	(@o($o:ident) ($($var:tt)*) $($tt:tt)*) => {
-		$o.push(Index::ExprApply($crate::nix_expr_inner!($($var)+)));
-		nix_go!(@o($o) $($tt)*);
+	(@o($o:expr) ($($var:tt)*) $($tt:tt)*) => {
+		nix_go!(@o($o.call($crate::nix_expr_inner!($($var)+))?) $($tt)*)
 	};
-	(@o($o:ident) | $($var:tt)*) => {
-		$o.push(Index::Pipe($crate::nix_expr_inner!($($var)+)));
-	};
-	(@o($o:ident) + $($var:tt)*) => {
-		$o.push(Index::Merge($crate::nix_expr_inner!($($var)+)));
-	};
-	(@o($o:ident)) => {};
+	(@o($o:expr)) => {$o};
 	($field:ident $($tt:tt)+) => {{
-		use $crate::{nix_go, Index};
-		let field = $field.clone();
-		let mut out = vec![];
-		nix_go!(@o(out) $($tt)*);
-		field.select(out).await?
+		use $crate::nix_go;
+		let out = $field.clone();
+		nix_go!(@o(out) $($tt)*)
 	}}
 }
 #[macro_export]
 macro_rules! nix_go_json {
 	($($tt:tt)*) => {{
-		$crate::nix_go!($($tt)*).as_json().await?
+		$crate::nix_go!($($tt)*).as_json()?
 	}};
 }

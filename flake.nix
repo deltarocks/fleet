@@ -17,6 +17,9 @@
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # DeterminateSystem's nix fork is controversial, but I don't mind it,
+    # and it has lazy-trees support which is useful for fleet.
+    nix.url = "/home/lach/build/nix-src";
   };
   outputs =
     inputs:
@@ -40,6 +43,11 @@
           flakeModule = flakeModules.default;
 
           fleetModules.tf = ./modules/extras/tf.nix;
+
+          testObj = {
+            v = "Hello";
+          };
+          testString = "hello";
 
           # To be used with https://github.com/NixOS/nix/pull/8892
           schemas =
@@ -80,6 +88,7 @@
             system,
             pkgs,
             self,
+            inputs',
             ...
           }:
           let
@@ -108,7 +117,7 @@
             packages = lib.mkIf deployerSystem (
               let
                 packages = pkgs.callPackages ./pkgs {
-                  inherit craneLib;
+                  inherit craneLib inputs';
                 };
               in
               packages // { default = packages.fleet; }
@@ -120,6 +129,7 @@
                 nixpkgsCraneLib = inputs.crane.mkLib pkgs;
                 packages = pkgs.callPackages ./pkgs {
                   craneLib = nixpkgsCraneLib;
+                  inherit inputs;
                 };
                 prefixAttrs =
                   prefix: attrs:
@@ -150,13 +160,16 @@
                 cargo-fuzz
                 cargo-watch
                 cargo-outdated
+                gdb
 
                 pkg-config
                 openssl
                 bacon
                 nil
                 rustPlatform.bindgenHook
-                # nixVersions.nix_2_22
+                inputs'.nix.packages.nix-expr-c
+                inputs'.nix.packages.nix-flake-c
+                inputs'.nix.packages.nix-fetchers-c
               ];
               environment.PROTOC = "${pkgs.protobuf}/bin/protoc";
             };

@@ -1,13 +1,13 @@
 use std::{env::current_dir, os::unix::fs::symlink, path::PathBuf};
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use clap::Parser;
 use fleet_base::{
 	deploy::{DeployAction, deploy_task, upload_task},
 	host::{Config, DeployKind, GenerationStorage},
 	opts::FleetOpts,
 };
-use nix_eval::{NixBuildBatch, nix_go};
+use nix_eval::nix_go;
 use tokio::task::LocalSet;
 use tracing::{Instrument, error, field, info, info_span, warn};
 
@@ -32,17 +32,15 @@ async fn build_task(
 	config: Config,
 	hostname: String,
 	build_attr: &str,
-	batch: Option<NixBuildBatch>,
+	// batch: Option<NixBuildBatch>,
 ) -> Result<PathBuf> {
 	info!("building");
 	let host = config.host(&hostname).await?;
 	// let action = Action::from(self.subcommand.clone());
 	let nixos = host.nixos_config().await?;
 	let drv = nix_go!(nixos.system.build[{ build_attr }]);
-	let outputs = drv.build_maybe_batch(batch).await?;
-	let out_output = outputs
-		.get("out")
-		.ok_or_else(|| anyhow!("system build should produce \"out\" output"))?;
+	// let outputs = drv.build_maybe_batch(batch).await?;
+	let out_output = drv.build("out").await?;
 
 	// We already have system profiles for backups.
 	if !host.local {
@@ -56,11 +54,11 @@ async fn build_task(
 					config.data().gc_root_prefix
 				),
 			)
-			.arg(out_output);
+			.arg(&out_output);
 		cmd.sudo().run_nix().await?;
 	}
 
-	Ok(out_output.clone())
+	Ok(out_output)
 }
 
 impl BuildSystems {
@@ -68,21 +66,20 @@ impl BuildSystems {
 		let hosts = opts.filter_skipped(config.list_hosts().await?).await?;
 		let set = LocalSet::new();
 		let build_attr = self.build_attr.clone();
-		let batch = (hosts.len() > 1).then(|| {
-			config
-				.nix_session
-				.new_build_batch("build-hosts".to_string())
-		});
+		// let batch = (hosts.len() > 1).then(|| {
+		// 	config
+		// 		.nix_session
+		// 		.new_build_batch("build-hosts".to_string())
+		// });
 		for host in hosts {
 			let config = config.clone();
 			let span = info_span!("build", host = field::display(&host.name));
 			let hostname = host.name;
 			let build_attr = build_attr.clone();
-			let batch = batch.clone();
+			// let batch = batch.clone();
 			set.spawn_local(
 				(async move {
-					let built = match build_task(config, hostname.clone(), &build_attr, batch).await
-					{
+					let built = match build_task(config, hostname.clone(), &build_attr).await {
 						Ok(path) => path,
 						Err(e) => {
 							error!("failed to deploy host: {}", e);
@@ -91,7 +88,7 @@ impl BuildSystems {
 					};
 					// TODO: Handle error
 					let mut out = current_dir().expect("cwd exists");
-					out.push(format!("built-{}", hostname));
+					out.push(format!("built-{hostname}"));
 
 					info!("linking iso image to {:?}", out);
 					if let Err(e) = symlink(built, out) {
@@ -101,7 +98,6 @@ impl BuildSystems {
 				.instrument(span),
 			);
 		}
-		drop(batch);
 		set.await;
 		Ok(())
 	}
@@ -111,17 +107,16 @@ impl Deploy {
 	pub async fn run(self, config: &Config, opts: &FleetOpts) -> Result<()> {
 		let hosts = opts.filter_skipped(config.list_hosts().await?).await?;
 		let set = LocalSet::new();
-		let batch = (hosts.len() > 1).then(|| {
-			config
-				.nix_session
-				.new_build_batch("deploy-hosts".to_string())
-		});
+		// let batch = (hosts.len() > 1).then(|| {
+		// 	config
+		// 		.nix_session
+		// 		.new_build_batch("deploy-hosts".to_string())
+		// });
 		for host in hosts.into_iter() {
 			let config = config.clone();
 			let span = info_span!("deploy", host = field::display(&host.name));
 			let hostname = host.name.clone();
 			let opts = opts.clone();
-			let batch = batch.clone();
 			if let Some(deploy_kind) = opts.action_attr::<DeployKind>(&host, "deploy_kind").await? {
 				host.set_deploy_kind(deploy_kind);
 			};
@@ -131,15 +126,14 @@ impl Deploy {
 
 			set.spawn_local(
 				(async move {
-					let built =
-						match build_task(config.clone(), hostname.clone(), "toplevel", batch).await
-						{
-							Ok(path) => path,
-							Err(e) => {
-								error!("failed to build host system closure: {}", e);
-								return;
-							}
-						};
+					let built = match build_task(config.clone(), hostname.clone(), "toplevel").await
+					{
+						Ok(path) => path,
+						Err(e) => {
+							error!("failed to build host system closure: {:#}", e);
+							return;
+						}
+					};
 
 					let deploy_kind = match host.deploy_kind().await {
 						Ok(v) => v,
@@ -187,7 +181,6 @@ impl Deploy {
 				.instrument(span),
 			);
 		}
-		drop(batch);
 		set.await;
 		Ok(())
 	}

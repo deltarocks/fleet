@@ -65,7 +65,7 @@ in
           normalEval = bootstrapNixpkgs.lib.evalModules {
             modules = (import ../modules/module-list.nix) ++ [
               module
-              {
+              ({inputs', ...}: {
                 config = {
                   data = if isPath data then import data else data;
                   nixpkgs.buildUsing = mkOptionDefault bootstrapNixpkgs;
@@ -74,6 +74,7 @@ in
                       inherit
                         (import ../pkgs {
                           inherit (prev) callPackage;
+                          inherit inputs';
                           craneLib = crane.mkLib prev;
                         })
                         fleet-install-secrets
@@ -82,7 +83,7 @@ in
                     })
                   ];
                 };
-              }
+              })
             ];
             specialArgs = {
               inherit inputs self;

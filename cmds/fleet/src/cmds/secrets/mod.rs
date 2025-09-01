@@ -2,6 +2,7 @@ use std::{
 	collections::{BTreeMap, BTreeSet, HashSet},
 	io::{self, Read, Write, stdin, stdout},
 	path::PathBuf,
+	slice,
 };
 
 use age::Recipient;
@@ -14,7 +15,7 @@ use fleet_base::{
 	opts::FleetOpts,
 };
 use fleet_shared::SecretData;
-use nix_eval::{NixBuildBatch, Value, nix_go, nix_go_json};
+use nix_eval::{NixType, Value, nix_go, nix_go_json};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
 use tabled::{Table, Tabled};
@@ -159,7 +160,7 @@ fn secret_needs_regeneration(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip(config, secret, field, prefer_identities, batch))]
+#[tracing::instrument(skip(config, secret, field, prefer_identities))]
 async fn maybe_regenerate_shared_secret(
 	secret_name: &str,
 	config: &Config,
@@ -168,7 +169,7 @@ async fn maybe_regenerate_shared_secret(
 	expected_owners: &[String],
 	expected_generation_data: serde_json::Value,
 	prefer_identities: &[String],
-	batch: Option<NixBuildBatch>,
+	// batch: Option<NixBuildBatch>,
 ) -> Result<FleetSharedSecret> {
 	let original_set = secret.owners.clone();
 
@@ -206,12 +207,12 @@ async fn maybe_regenerate_shared_secret(
 			field,
 			expected_owners.to_vec(),
 			expected_generation_data,
-			batch,
+			// batch,
 		)
 		.await?;
 		Ok(generated)
 	} else {
-		drop(batch);
+		// drop(batch);
 		let identity_holder = if !prefer_identities.is_empty() {
 			prefer_identities
 				.iter()
@@ -263,7 +264,7 @@ async fn generate_impure(
 	default_generator: Value,
 	expected_owners: &[String],
 	expected_generation_data: serde_json::Value,
-	batch: Option<NixBuildBatch>,
+	// batch: Option<NixBuildBatch>,
 ) -> Result<FleetSecret> {
 	let generator = nix_go!(secret.generator);
 	let on: Option<String> = nix_go_json!(default_generator.impureOn);
@@ -284,17 +285,16 @@ async fn generate_impure(
 		recipients.push(key);
 	}
 	let generators = nix_go!(mk_secret_generators(Obj { recipients }));
-	let pkgs_and_generators = nix_go!(on_pkgs + generators);
+	// FIXME: Apparently, // operator is slow in nix
+	let pkgs_and_generators = on_pkgs.attrs_update(generators)?;
 
 	let call_package = nix_go!(nixpkgs.lib.callPackageWith(pkgs_and_generators));
 
 	let generator = nix_go!(call_package(generator)(Obj {}));
 
-	let generator = generator.build_maybe_batch(batch).await?;
-	let generator = generator
-		.get("out")
-		.ok_or_else(|| anyhow!("missing generateImpure out"))?;
-	let generator = host.remote_derivation(generator).await?;
+	// let generator = generator.build_maybe_batch(batch).await?;
+	let generator = generator.build("out").await?;
+	let generator = host.remote_derivation(&generator).await?;
 
 	let out_parent = host.mktemp_dir().await?;
 	let out = format!("{out_parent}/out");
@@ -347,21 +347,21 @@ async fn generate(
 	secret: Value,
 	expected_owners: &[String],
 	expected_generation_data: serde_json::Value,
-	batch: Option<NixBuildBatch>,
+	// batch: Option<NixBuildBatch>,
 ) -> Result<FleetSecret> {
 	let generator = nix_go!(secret.generator);
 	// Can't properly check on nix module system level
 	{
-		let gen_ty = generator.type_of().await?;
-		if gen_ty == "null" {
+		let gen_ty = generator.type_of()?;
+		if matches!(gen_ty, NixType::Null) {
 			bail!("secret has no generator defined, can't automatically generate it.");
 		}
-		if gen_ty == "set" {
-			if !generator.has_field("__functor").await? {
-				bail!("generator should be functor, got {gen_ty}");
+		if matches!(gen_ty, NixType::Attrs) {
+			if !generator.has_field("__functor")? {
+				bail!("generator should be functor, got {gen_ty:?}");
 			}
-		} else if gen_ty != "lambda" {
-			bail!("generator should be functor, got {gen_ty}");
+		} else if matches!(gen_ty, NixType::Function) {
+			bail!("generator should be functor, got {gen_ty:?}");
 		}
 	}
 	let nixpkgs = &config.nixpkgs;
@@ -378,7 +378,7 @@ async fn generate(
 	let generators = nix_go!(default_mk_secret_generators(Obj {
 		recipients: <Vec<String>>::new(),
 	}));
-	let pkgs_and_generators = nix_go!(default_pkgs + generators);
+	let pkgs_and_generators = default_pkgs.clone().attrs_update(generators)?;
 
 	let call_package = nix_go!(nixpkgs.lib.callPackageWith(pkgs_and_generators));
 	let default_generator = nix_go!(call_package(generator)(Obj {}));
@@ -394,7 +394,7 @@ async fn generate(
 				default_generator,
 				expected_owners,
 				expected_generation_data,
-				batch,
+				// batch,
 			)
 			.await
 		}
@@ -416,7 +416,7 @@ async fn generate_shared(
 	secret: Value,
 	expected_owners: Vec<String>,
 	expected_generation_data: serde_json::Value,
-	batch: Option<NixBuildBatch>,
+	// batch: Option<NixBuildBatch>,
 ) -> Result<FleetSharedSecret> {
 	// let owners: Vec<String> = nix_go_json!(secret.expectedOwners);
 	Ok(FleetSharedSecret {
@@ -426,7 +426,7 @@ async fn generate_shared(
 			secret,
 			&expected_owners,
 			expected_generation_data,
-			batch,
+			// batch,
 		)
 		.await?,
 		owners: expected_owners,
@@ -722,7 +722,8 @@ impl Secret {
 				}
 
 				let config_field = &config.config_field;
-				let field = nix_go!(config_field.sharedSecrets[{ name }]);
+				let name_clone = name.clone();
+				let field = nix_go!(config_field.sharedSecrets[name_clone]);
 				let expected_generation_data = nix_go_json!(field.expectedGenerationData);
 
 				let updated = maybe_regenerate_shared_secret(
@@ -733,7 +734,7 @@ impl Secret {
 					&target_machines,
 					expected_generation_data,
 					&prefer_identities,
-					None,
+					// None,
 				)
 				.await?;
 				config.replace_shared(name, updated);
@@ -746,7 +747,7 @@ impl Secret {
 				let stored_shared_set = config.list_shared().into_iter().collect::<HashSet<_>>();
 				{
 					// Generate missing shared
-					let shared_batch = None;
+					// let shared_batch = None;
 					let _span = info_span!("shared").entered();
 					let expected_shared_set = config
 						.list_configured_shared()
@@ -771,7 +772,7 @@ impl Secret {
 							secret,
 							expected_owners,
 							expected_generation_data,
-							shared_batch.clone(),
+							// shared_batch.clone(),
 						)
 						.in_current_span()
 						.await?;
@@ -779,7 +780,7 @@ impl Secret {
 					}
 				}
 				if !skip_hosts {
-					let hosts_batch = None;
+					// let hosts_batch = None;
 					for host in config.list_hosts().await? {
 						if opts.should_skip(&host).await? {
 							continue;
@@ -805,9 +806,9 @@ impl Secret {
 								config,
 								missing,
 								secret,
-								&[host.name.clone()],
+								slice::from_ref(&host.name),
 								expected_generation_data,
-								hosts_batch.clone(),
+								// hosts_batch.clone(),
 							)
 							.in_current_span()
 							.await
@@ -831,9 +832,9 @@ impl Secret {
 									config,
 									&name,
 									secret,
-									&[host.name.clone()],
+									slice::from_ref(&host.name),
 									expected_generation_data,
-									hosts_batch.clone(),
+									// hosts_batch.clone(),
 								)
 								.in_current_span()
 								.await
@@ -874,7 +875,7 @@ impl Secret {
 							&expected_owners,
 							expected_generation_data,
 							&prefer_identities,
-							None,
+							// None,
 						)
 						.await?,
 					);

@@ -23,6 +23,7 @@ use futures::{TryStreamExt, future::LocalBoxFuture, stream::FuturesUnordered};
 use human_repr::HumanCount;
 #[cfg(feature = "indicatif")]
 use indicatif::{ProgressState, ProgressStyle};
+use nix_eval::{gc_register_my_thread, gc_unregister_my_thread, init_libraries};
 use tracing::{Instrument, error, info, info_span};
 #[cfg(feature = "indicatif")]
 use tracing_indicatif::IndicatifLayer;
@@ -183,21 +184,31 @@ fn main() -> ExitCode {
 	}
 
 	setup_logging();
-	async_main(opts)
-}
 
-#[tokio::main]
-async fn async_main(opts: RootOpts) -> ExitCode {
-	if let Err(e) = main_real(opts).await {
-		error!("{e:#}");
-		return ExitCode::FAILURE;
-	}
-	ExitCode::SUCCESS
+	init_libraries();
+
+	tokio::runtime::Builder::new_multi_thread()
+		.enable_all()
+		.on_thread_start(|| {
+			gc_register_my_thread();
+		})
+		.on_thread_stop(|| {
+			gc_unregister_my_thread();
+		})
+		.build()
+		.expect("failed to build runtime")
+		.block_on(async {
+			if let Err(e) = main_real(opts).await {
+				error!("{e:#}");
+				ExitCode::FAILURE
+			} else {
+				ExitCode::SUCCESS
+			}
+		})
+	// async_main(opts)
 }
 
 async fn main_real(opts: RootOpts) -> Result<()> {
-	nix_eval::init_tokio();
-
 	let nix_args = std::env::var_os("NIX_ARGS")
 		.map(|a| extra_args::parse_os(&a))
 		.transpose()?

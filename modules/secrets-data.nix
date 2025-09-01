@@ -105,7 +105,7 @@ let
         description = "Age-compatible key";
       };
     };
-    config = {};
+    config = { };
   };
 in
 {

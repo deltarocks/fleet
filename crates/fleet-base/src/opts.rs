@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use nix_eval::{NixSessionPool, Value, nix_go, util::assert_warn};
+use nix_eval::{FetchSettings, FlakeReference, FlakeSettings, Value, nix_go, util::assert_warn};
 use nom::{
 	Parser,
 	bytes::complete::take_while1,
@@ -210,30 +210,39 @@ impl FleetOpts {
 			std::fs::read_to_string(&fleet_data_path).context("reading fleet state (fleet.nix)")?;
 		let data: Mutex<FleetData> = nixlike::parse_str(&bytes)?;
 
-		let pool = NixSessionPool::new(
-			directory.as_os_str().to_owned(),
-			nix_args.clone(),
-			self.local_system.clone(),
-			self.fail_fast,
-		)
-		.await?;
-		let nix_session = pool.get().await?;
+		let mut fetch_settings = FetchSettings::new();
+		fetch_settings.set(c"warn-dirty", c"false");
 
-		let builtins_field = Value::binding(nix_session.clone(), "builtins").await?;
+		// TODO: use correct directory, not cwd
+		let (mut flake, _) = FlakeReference::new(
+			directory
+				.to_str()
+				.ok_or_else(|| anyhow::anyhow!("fleet dir should have utf-8 path"))?,
+			&fetch_settings,
+		)?;
+		let flake = flake.lock(&fetch_settings)?;
 
-		let fleet_root = Value::binding(nix_session.clone(), "fleetConfigurations").await?;
-		let fleet_field = nix_go!(fleet_root.default({ data }));
+		let mut flake_settings = FlakeSettings::new()?;
+		let flake = flake.get_attrs(&mut flake_settings)?;
+
+		let builtins_field = Value::eval("builtins")?;
+
+		let fleet_root = flake.get_field("fleetConfigurations")?;
+		let data_val = Value::serialized(&data)?;
+		let fleet_field = nix_go!(fleet_root.default(data_val));
 
 		let config_field = nix_go!(fleet_field.config);
 
 		if assert {
-			assert_warn("fleet config evaluation", &config_field).await?;
+			assert_warn("fleet config evaluation", &config_field)
+				.await
+				.context("failed to verify assertions")?;
 		}
 
 		let import = nix_go!(builtins_field.import);
 		let overlays = nix_go!(config_field.nixpkgs.overlays);
 		let nixpkgs = nix_go!(config_field.nixpkgs.buildUsing);
-		let nixpkgs_imported = nix_go!(nixpkgs | import);
+		let nixpkgs_imported = nix_go!(import(nixpkgs));
 
 		let default_pkgs = nix_go!(nixpkgs_imported(Obj {
 			overlays,
@@ -241,7 +250,6 @@ impl FleetOpts {
 		}));
 
 		Ok(Config(Arc::new(FleetConfigInternals {
-			nix_session,
 			directory,
 			data,
 			local_system: self.local_system.clone(),

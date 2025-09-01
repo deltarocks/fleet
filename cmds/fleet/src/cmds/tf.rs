@@ -42,8 +42,7 @@ impl Tf {
 			debug!("generating terraform configs");
 			let system = &config.local_system;
 			let config = &config.config_field;
-			let data: HashMap<String, PathBuf> = nix_go!(config.tf({ system })).build().await?;
-			let data = &data["out"];
+			let data: PathBuf = nix_go!(config.tf({ system })).build("out").await?;
 			let data = fs::read(&data).await?;
 
 			create_dir_all(&dir).await?;
