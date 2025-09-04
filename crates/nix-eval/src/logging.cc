@@ -8,19 +8,6 @@ struct TracingLogger : Logger {
   TracingLogger() {}
 
   bool isVerbose() override { return true; }
-  // void addFields(nlohmann::json & json, const Fields & fields)
-  //    {
-  //        if (fields.empty())
-  //            return;
-  //        auto & arr = json["fields"] = nlohmann::json::array();
-  //        for (auto & f : fields)
-  //            if (f.type == Logger::Field::tInt)
-  //                arr.push_back(f.i);
-  //            else if (f.type == Logger::Field::tString)
-  //                arr.push_back(f.s);
-  //            else
-  //                unreachable();
-  //    }
   void log(Verbosity lvl, std::string_view s) override {
     rust::Str str(s.data(), s.size());
     emit_log(lvl, str);
@@ -60,16 +47,18 @@ struct TracingLogger : Logger {
   };
 
   void writeToStdout(std::string_view s) override {
-    printf("writeToStdout() called\n");
+    emit_warn("writeToStdout() called, but unsupported");
   }
   void warn(const std::string &msg) override { emit_warn(msg); }
 
   virtual std::optional<char> ask(std::string_view s) {
-    printf("ask() called\n");
+    emit_warn("ask() called, but unsupported");
     return {};
   }
 };
 
 extern "C" {
-void apply_tracing_logger() { logger = std::make_unique<TracingLogger>(); }
+void apply_tracing_logger() {
+  logger = std::make_unique<TracingLogger>();
+}
 }

@@ -11,6 +11,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 pub use anyhow::Result;
+use tracing::instrument;
 
 use self::logging::nix_logging_cxx;
 use self::nix_cxx::set_fetcher_setting;
@@ -18,11 +19,12 @@ use self::nix_raw::{
 	alloc_value, c_context, c_context_create, err_code, err_info_msg, eval_state_build,
 	eval_state_builder_new, expr_eval_from_string, fetchers_settings, fetchers_settings_free,
 	fetchers_settings_new, flake_lock, flake_lock_flags, flake_lock_flags_free,
-	flake_lock_flags_new, flake_reference_parse_flags, flake_reference_parse_flags_free,
-	flake_reference_parse_flags_new, flake_reference_parse_flags_set_base_directory,
-	flake_settings, flake_settings_free, flake_settings_new, init_bool, init_int, init_string,
-	locked_flake_free, locked_flake_get_output_attrs, set_err_msg, setting_set, state_free,
-	value_decref, value_incref,
+	flake_lock_flags_new, flake_lock_flags_set_mode_virtual, flake_reference_parse_flags,
+	flake_reference_parse_flags_free, flake_reference_parse_flags_new,
+	flake_reference_parse_flags_set_base_directory, flake_settings, flake_settings_free,
+	flake_settings_new, init_bool, init_int, init_string, locked_flake_free,
+	locked_flake_get_output_attrs, set_err_msg, setting_set, state_free, value_decref,
+	value_incref,
 };
 
 // Contains macros helpers
@@ -94,7 +96,7 @@ enum FunctorKind {
 
 #[derive(Debug)]
 #[repr(i32)]
-enum NixErrorKind {
+pub enum NixErrorKind {
 	Unknown = 1,
 	Overflow = 2,
 	Key = 3,
@@ -136,6 +138,7 @@ pub fn gc_unregister_my_thread() {
 
 pub struct ThreadRegisterGuard {}
 impl ThreadRegisterGuard {
+	#[allow(clippy::new_without_default)]
 	pub fn new() -> Self {
 		gc_register_my_thread();
 		Self {}
@@ -200,6 +203,12 @@ impl NixContext {
 		Ok(o)
 	}
 }
+
+impl Default for NixContext {
+	fn default() -> Self {
+		Self::new()
+	}
+}
 impl Drop for NixContext {
 	fn drop(&mut self) {
 		unsafe {
@@ -227,6 +236,17 @@ impl GlobalState {
 					c,
 					builder,
 					c"lazy-trees".as_ptr(),
+					c"true".as_ptr(),
+				)
+			}
+			// eval_s
+		})?;
+		ctx.run_in_context(|c| {
+			unsafe {
+				nix_raw::eval_state_builder_set_eval_setting(
+					c,
+					builder,
+					c"lazy-locks".as_ptr(),
 					c"true".as_ptr(),
 				)
 			}
@@ -319,7 +339,7 @@ impl Drop for FlakeSettings {
 
 pub struct FlakeReferenceParseFlags(*mut flake_reference_parse_flags);
 impl FlakeReferenceParseFlags {
-	pub fn new(settings: &mut FlakeSettings) -> Result<Self> {
+	pub fn new(settings: &FlakeSettings) -> Result<Self> {
 		with_default_context(|c, _| unsafe { flake_reference_parse_flags_new(c, settings.0) })
 			.map(Self)
 	}
@@ -346,7 +366,11 @@ impl Drop for FlakeReferenceParseFlags {
 struct FlakeLockFlags(*mut flake_lock_flags);
 impl FlakeLockFlags {
 	fn new(settings: &mut FlakeSettings) -> Result<Self> {
-		with_default_context(|c, _| unsafe { flake_lock_flags_new(c, settings.0) }).map(Self)
+		let o = with_default_context(|c, _| unsafe { flake_lock_flags_new(c, settings.0) })
+			.map(Self)?;
+		with_default_context(|c, _| unsafe { flake_lock_flags_set_mode_virtual(c, o.0) })?;
+
+		Ok(o)
 	}
 }
 impl Drop for FlakeLockFlags {
@@ -381,10 +405,13 @@ impl Drop for EvalState {
 
 pub struct FlakeReference(*mut nix_raw::flake_reference);
 impl FlakeReference {
-	pub fn new(s: &str, fetch: &FetchSettings) -> Result<(Self, String)> {
-		let mut flake_settings = FlakeSettings::new()?;
-		let parse_flags = FlakeReferenceParseFlags::new(&mut flake_settings)?;
-
+	#[instrument(name = "new-flake-reference", skip(flake, parse, fetch))]
+	pub fn new(
+		s: &str,
+		flake: &FlakeSettings,
+		parse: &FlakeReferenceParseFlags,
+		fetch: &FetchSettings,
+	) -> Result<(Self, String)> {
 		let mut out = null_mut();
 		let mut fragment = String::new();
 		// let fetch_settings = fetcher_settings;
@@ -392,8 +419,8 @@ impl FlakeReference {
 			nix_raw::flake_reference_and_fragment_from_string(
 				c,
 				fetch.0,
-				flake_settings.0,
-				parse_flags.0,
+				flake.0,
+				parse.0,
 				s.as_ptr().cast(),
 				s.len(),
 				&mut out,
@@ -405,6 +432,7 @@ impl FlakeReference {
 
 		Ok((Self(out), fragment))
 	}
+	#[instrument(name = "lock-flake", skip(self, fetch))]
 	pub fn lock(&mut self, fetch: &FetchSettings) -> Result<LockedFlake> {
 		let mut settings = FlakeSettings::new()?;
 		let lock_flags = FlakeLockFlags::new(&mut settings)?;

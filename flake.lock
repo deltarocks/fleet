@@ -105,7 +105,6 @@
       },
       "locked": {
         "lastModified": 1757000273,
-        "narHash": "sha256-9AKhwsSlegWnNFy8++OMNctrxJUUIE7nG4s4ZHmFPic=",
         "owner": "deltarocks",
         "repo": "nix",
         "rev": "eba1f549ec21208cf98343f1351a95e2e6eb3fbb",

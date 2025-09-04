@@ -7,7 +7,10 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use nix_eval::{FetchSettings, FlakeReference, FlakeSettings, Value, nix_go, util::assert_warn};
+use nix_eval::{
+	FetchSettings, FlakeReference, FlakeReferenceParseFlags, FlakeSettings, Value, nix_go,
+	util::assert_warn,
+};
 use nom::{
 	Parser,
 	bytes::complete::take_while1,
@@ -213,16 +216,21 @@ impl FleetOpts {
 		let mut fetch_settings = FetchSettings::new();
 		fetch_settings.set(c"warn-dirty", c"false");
 
-		// TODO: use correct directory, not cwd
+		let mut flake_settings = FlakeSettings::new()?;
+		let mut parse = FlakeReferenceParseFlags::new(&flake_settings)?;
+		// For some reason, lazy trees not being used when there is no base dir set
+		parse.set_base_dir("/")?;
+
 		let (mut flake, _) = FlakeReference::new(
 			directory
 				.to_str()
 				.ok_or_else(|| anyhow::anyhow!("fleet dir should have utf-8 path"))?,
+			&flake_settings,
+			&parse,
 			&fetch_settings,
 		)?;
 		let flake = flake.lock(&fetch_settings)?;
 
-		let mut flake_settings = FlakeSettings::new()?;
 		let flake = flake.get_attrs(&mut flake_settings)?;
 
 		let builtins_field = Value::eval("builtins")?;
