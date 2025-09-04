@@ -55,4 +55,5 @@ indicatif = [
 	"dep:indicatif",
 	"dep:human-repr",
 	"better-command/indicatif",
+	"nix-eval/indicatif",
 ]

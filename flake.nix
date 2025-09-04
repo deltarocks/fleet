@@ -19,7 +19,7 @@
     };
     # DeterminateSystem's nix fork is controversial, but I don't mind it,
     # and it has lazy-trees support which is useful for fleet.
-    nix.url = "/home/lach/build/nix-src";
+    nix.url = "github:deltarocks/nix/fleet";
   };
   outputs =
     inputs:
@@ -44,10 +44,13 @@
 
           fleetModules.tf = ./modules/extras/tf.nix;
 
-          testObj = {
-            v = "Hello";
+          # Used to test nix-eval bindings
+          testData = {
+            testObj = {
+              v = "Hello";
+            };
+            testString = "hello";
           };
-          testString = "hello";
 
           # To be used with https://github.com/NixOS/nix/pull/8892
           schemas =

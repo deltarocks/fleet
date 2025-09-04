@@ -169,7 +169,6 @@ async fn maybe_regenerate_shared_secret(
 	expected_owners: &[String],
 	expected_generation_data: serde_json::Value,
 	prefer_identities: &[String],
-	// batch: Option<NixBuildBatch>,
 ) -> Result<FleetSharedSecret> {
 	let original_set = secret.owners.clone();
 
@@ -207,12 +206,10 @@ async fn maybe_regenerate_shared_secret(
 			field,
 			expected_owners.to_vec(),
 			expected_generation_data,
-			// batch,
 		)
 		.await?;
 		Ok(generated)
 	} else {
-		// drop(batch);
 		let identity_holder = if !prefer_identities.is_empty() {
 			prefer_identities
 				.iter()
@@ -264,7 +261,6 @@ async fn generate_impure(
 	default_generator: Value,
 	expected_owners: &[String],
 	expected_generation_data: serde_json::Value,
-	// batch: Option<NixBuildBatch>,
 ) -> Result<FleetSecret> {
 	let generator = nix_go!(secret.generator);
 	let on: Option<String> = nix_go_json!(default_generator.impureOn);
@@ -292,7 +288,6 @@ async fn generate_impure(
 
 	let generator = nix_go!(call_package(generator)(Obj {}));
 
-	// let generator = generator.build_maybe_batch(batch).await?;
 	let generator = generator.build("out").await?;
 	let generator = host.remote_derivation(&generator).await?;
 
@@ -347,12 +342,11 @@ async fn generate(
 	secret: Value,
 	expected_owners: &[String],
 	expected_generation_data: serde_json::Value,
-	// batch: Option<NixBuildBatch>,
 ) -> Result<FleetSecret> {
 	let generator = nix_go!(secret.generator);
 	// Can't properly check on nix module system level
 	{
-		let gen_ty = generator.type_of()?;
+		let gen_ty = generator.type_of();
 		if matches!(gen_ty, NixType::Null) {
 			bail!("secret has no generator defined, can't automatically generate it.");
 		}
@@ -394,7 +388,6 @@ async fn generate(
 				default_generator,
 				expected_owners,
 				expected_generation_data,
-				// batch,
 			)
 			.await
 		}
@@ -416,7 +409,6 @@ async fn generate_shared(
 	secret: Value,
 	expected_owners: Vec<String>,
 	expected_generation_data: serde_json::Value,
-	// batch: Option<NixBuildBatch>,
 ) -> Result<FleetSharedSecret> {
 	// let owners: Vec<String> = nix_go_json!(secret.expectedOwners);
 	Ok(FleetSharedSecret {
@@ -426,7 +418,6 @@ async fn generate_shared(
 			secret,
 			&expected_owners,
 			expected_generation_data,
-			// batch,
 		)
 		.await?,
 		owners: expected_owners,
@@ -747,7 +738,6 @@ impl Secret {
 				let stored_shared_set = config.list_shared().into_iter().collect::<HashSet<_>>();
 				{
 					// Generate missing shared
-					// let shared_batch = None;
 					let _span = info_span!("shared").entered();
 					let expected_shared_set = config
 						.list_configured_shared()
@@ -772,7 +762,6 @@ impl Secret {
 							secret,
 							expected_owners,
 							expected_generation_data,
-							// shared_batch.clone(),
 						)
 						.in_current_span()
 						.await?;
@@ -780,7 +769,6 @@ impl Secret {
 					}
 				}
 				if !skip_hosts {
-					// let hosts_batch = None;
 					for host in config.list_hosts().await? {
 						if opts.should_skip(&host).await? {
 							continue;
@@ -808,7 +796,6 @@ impl Secret {
 								secret,
 								slice::from_ref(&host.name),
 								expected_generation_data,
-								// hosts_batch.clone(),
 							)
 							.in_current_span()
 							.await
@@ -834,7 +821,6 @@ impl Secret {
 									secret,
 									slice::from_ref(&host.name),
 									expected_generation_data,
-									// hosts_batch.clone(),
 								)
 								.in_current_span()
 								.await

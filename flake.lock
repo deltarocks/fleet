@@ -104,14 +104,18 @@
         "nixpkgs-regression": "nixpkgs-regression"
       },
       "locked": {
-        "lastModified": 1756860322,
-        "narHash": "sha256-mT01CpWVdqSm79L270dSkjdYbdc37r+Hq9vk4GTp7Ao=",
-        "path": "/home/lach/build/nix-src",
-        "type": "path"
+        "lastModified": 1757000273,
+        "narHash": "sha256-9AKhwsSlegWnNFy8++OMNctrxJUUIE7nG4s4ZHmFPic=",
+        "owner": "deltarocks",
+        "repo": "nix",
+        "rev": "eba1f549ec21208cf98343f1351a95e2e6eb3fbb",
+        "type": "github"
       },
       "original": {
-        "path": "/home/lach/build/nix-src",
-        "type": "path"
+        "owner": "deltarocks",
+        "ref": "fleet",
+        "repo": "nix",
+        "type": "github"
       }
     },
     "nixpkgs": {

@@ -20,7 +20,7 @@ macro_rules! nix_expr_inner {
 		use $crate::{nix_expr_inner};
 		let mut out = std::collections::hash_map::HashMap::new();
 		nix_expr_inner!(@obj(out) $($tt)*);
-		Value::new_attrs(out)?
+		Value::new_attrs(out)
 	}};
 	(@field($o:ident) . $var:ident $($tt:tt)*) => {{
 		$o.index_attr(stringify!($var));

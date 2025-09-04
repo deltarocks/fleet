@@ -1,8 +1,4 @@
-use std::{
-	collections::{BTreeMap, HashMap},
-	ffi::OsString,
-	path::PathBuf,
-};
+use std::{collections::BTreeMap, ffi::OsString, path::PathBuf};
 
 use anyhow::{Context, Result};
 use clap::Parser;

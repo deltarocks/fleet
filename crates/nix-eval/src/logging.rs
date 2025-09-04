@@ -3,9 +3,10 @@ use std::fmt::Arguments;
 use std::sync::{LazyLock, Mutex};
 
 use tracing::{
-	Level, Metadata, Span, debug, debug_span, error, error_span, event, info, info_span, trace,
-	trace_span, warn, warn_span,
+	Level, Span, debug, debug_span, error, error_span, info, info_span, trace, trace_span, warn,
+	warn_span,
 };
+#[cfg(feature = "indicatif")]
 use tracing_indicatif::span_ext::IndicatifSpanExt as _;
 
 #[derive(Debug)]
@@ -31,8 +32,7 @@ fn strip_prefix_suffix<'s, 'p>(a: &'s str, pref: &'p str, suff: &'p str) -> Opti
 }
 
 fn parse_path(path: &str) -> &str {
-	let path = strip_prefix_suffix(path, "\x1b[35;1m", "\x1b[0m").unwrap_or(path);
-	path
+	strip_prefix_suffix(path, "\x1b[35;1m", "\x1b[0m").unwrap_or(path)
 }
 
 fn parse_drv(drv: &str) -> &str {
@@ -245,9 +245,9 @@ enum Verbosity {
 	Debug,
 	Vomit,
 }
-impl Into<tracing::Level> for Verbosity {
-	fn into(self) -> tracing::Level {
-		match self {
+impl From<Verbosity> for tracing::Level {
+	fn from(val: Verbosity) -> Self {
+		match val {
 			Verbosity::Error => Level::ERROR,
 			Verbosity::Warn => Level::WARN,
 			Verbosity::Notice => Level::WARN,
@@ -280,123 +280,6 @@ impl Verbosity {
 	}
 }
 
-#[derive(Hash, PartialEq, Eq, Clone, Copy)]
-enum MetadataKind {
-	Span,
-	Event,
-}
-// impl MetadataKind {
-// 	fn kind(&self) -> Kind {
-// 		match self {
-// 			MetadataKind::Span => Kind::SPAN,
-// 			MetadataKind::Event => Kind::EVENT,
-// 		}
-// 	}
-// }
-
-#[derive(Hash, PartialEq, Eq)]
-struct ForeignMetadataInfo {
-	target: &'static str,
-	level: Level,
-	kind: MetadataKind,
-	name: &'static str,
-	module: Option<&'static str>,
-	file: Option<&'static str>,
-	line: Option<u32>,
-	names: &'static [&'static str],
-}
-
-struct FakeCallsite;
-impl tracing::callsite::Callsite for FakeCallsite {
-	fn set_interest(&self, interest: tracing::subscriber::Interest) {
-		unreachable!()
-	}
-
-	fn metadata(&self) -> &Metadata<'_> {
-		unreachable!()
-	}
-}
-const FAKE_CALLSITE: FakeCallsite = FakeCallsite;
-
-#[cfg(false)]
-#[derive(Default)]
-struct ForeignSpanData {
-	interned: HashSet<&'static str>,
-	metadatas: HashMap<ForeignMetadataInfo, &'static Metadata<'static>>,
-}
-#[cfg(false)]
-impl ForeignSpanData {
-	fn intern(&mut self, s: &str) -> &'static str {
-		if let Some(v) = self.interned.get(s) {
-			return *v;
-		}
-		let leaked: Box<str> = s.into();
-		let leaked = Box::leak(leaked);
-		self.interned.insert(leaked);
-		return leaked;
-	}
-	fn alloc_metadata<'t>(
-		&'t mut self,
-		target: &'static str,
-		level: Level,
-		kind: MetadataKind,
-		name: &'static str,
-		module: Option<&'static str>,
-		file: Option<&'static str>,
-		line: Option<u32>,
-		names: &'static [&'static str],
-	) -> &'static Metadata<'static> {
-		let info = ForeignMetadataInfo {
-			target,
-			level,
-			kind,
-			name,
-			module,
-			file,
-			line,
-			names,
-		};
-		if let Some(v) = self.metadatas.get(&info) {
-			return *v;
-		}
-		let fake = FakeCallsite;
-		let metadata = Box::leak::<'static>(Box::new(Metadata::new(
-			name,
-			target,
-			level,
-			file,
-			line,
-			module,
-			FieldSet::new(names, tracing::callsite::Identifier(&FAKE_CALLSITE)),
-			kind.kind(),
-		)));
-
-		let meta_raw = &raw const *metadata;
-		let fields_raw = &raw const *metadata.fields();
-
-		// SAFETY: FieldSet struct should be inside of metadata struct... Which we assume here, but do not test
-		// FIXME: Safety comment above might be invalidated at any time, this should actually be covered by unit test (or, better: runtime assertion... Somehow.)
-		let fields_offset = unsafe { fields_raw.cast::<u8>().offset_from(meta_raw.cast()) };
-		let field_set = unsafe {
-			((&raw mut *metadata).cast::<()>())
-				.byte_offset(fields_offset)
-				.cast::<FieldSet>()
-		};
-		// FIXME: metadata borrow here invalidates our &mut borrow of 'static Metadata, and 'static FieldSet so this construction should be replaced with raw pointers or idk.
-		// Something should be better done inside of tracing crate itself, someting like interior mutability.
-		let callsite = Box::leak(Box::new(tracing::callsite::DefaultCallsite::new(metadata)));
-		unsafe { *field_set = FieldSet::new(names, tracing::callsite::Identifier(callsite)) };
-
-		tracing::callsite::register(&*callsite);
-
-		self.metadatas.insert(info, metadata);
-		return metadata;
-	}
-}
-
-#[cfg(false)]
-static FOREIGN_SPAN_DATA: LazyLock<Mutex<ForeignSpanData>> =
-	LazyLock::new(|| Mutex::new(ForeignSpanData::default()));
 static NIX_SPAN_MAPPING: LazyLock<Mutex<HashMap<u64, Span>>> =
 	LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -491,7 +374,10 @@ impl StartActivityBuilder {
 			}
 		};
 		if !s.trim().is_empty() {
-			span.pb_set_message(s);
+			#[cfg(feature = "indicatif")]
+			{
+				span.pb_set_message(s);
+			}
 			let _e = span.enter();
 			let level: Level = self.verbosity.into();
 			if level == Level::ERROR {
@@ -506,12 +392,15 @@ impl StartActivityBuilder {
 				trace!(target: "nix", "{}", s)
 			}
 		} else {
-			span.pb_start();
+			#[cfg(feature = "indicatif")]
+			{
+				span.pb_start();
+			}
 		}
 		mapping.insert(self.activity_id, span);
 	}
 	fn emit_result(&mut self, ty: u32) {
-		let mut mapping = NIX_SPAN_MAPPING.lock().expect("not poisoned");
+		let mapping = NIX_SPAN_MAPPING.lock().expect("not poisoned");
 
 		let Some(parent) = mapping.get(&self.activity_id) else {
 			panic!("unexpected result for dead parent");
@@ -536,9 +425,12 @@ impl StartActivityBuilder {
 				// parent.pb_set_message(phase);
 				debug!(target: "nix::phase", phase)
 			}
-			(ResultType::Progress, [Int(done), Int(expected), Int(_), Int(_)]) => {
-				parent.pb_set_length(*expected as u64);
-				parent.pb_set_position(*done as u64);
+			(ResultType::Progress, [Int(_done), Int(_expected), Int(_), Int(_)]) => {
+				#[cfg(feature = "indicatif")]
+				{
+					parent.pb_set_length(*_expected as u64);
+					parent.pb_set_position(*_done as u64);
+				}
 			}
 			_ => warn!("unknown progress report: {:?}({:?})", &res, &self.fields),
 		}
@@ -575,10 +467,6 @@ fn emit_log(lvl: u32, v: &str) {
 		trace!(target: "nix", "{v}")
 	}
 }
-
-// fn start_activity(act: u64, lvl: u32, act_ty: u32, s: &str, parent: u32) {
-// 	tracing::Span::new(meta, values)
-// }
 
 #[cxx::bridge]
 pub mod nix_logging_cxx {

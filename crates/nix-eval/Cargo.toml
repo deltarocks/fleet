@@ -7,26 +7,23 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-better-command.workspace = true
 nixlike.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["io-util", "process"] }
+tokio = { workspace = true }
 tokio-util.workspace = true
 tracing.workspace = true
 
 cxx = "1.0.168"
-futures = "0.3.31"
 itertools = "0.14.0"
-r2d2 = "0.8.10"
-regex = "1.11.1"
 test-log = { version = "0.2.18", features = ["trace"] }
-unindent = "0.2.4"
-tracing-indicatif = "0.3.13"
-ctor = "0.5.0"
+tracing-indicatif = { version = "0.3.13", optional = true }
 
 [build-dependencies]
 bindgen = "0.72.0"
 cxx-build = "1.0.168"
 pkg-config = "0.3.30"
+
+[features]
+indicatif = ["dep:tracing-indicatif"]

@@ -28,18 +28,12 @@ pub struct BuildSystems {
 	build_attr: String,
 }
 
-async fn build_task(
-	config: Config,
-	hostname: String,
-	build_attr: &str,
-	// batch: Option<NixBuildBatch>,
-) -> Result<PathBuf> {
+async fn build_task(config: Config, hostname: String, build_attr: &str) -> Result<PathBuf> {
 	info!("building");
 	let host = config.host(&hostname).await?;
 	// let action = Action::from(self.subcommand.clone());
 	let nixos = host.nixos_config().await?;
 	let drv = nix_go!(nixos.system.build[{ build_attr }]);
-	// let outputs = drv.build_maybe_batch(batch).await?;
 	let out_output = drv.build("out").await?;
 
 	// We already have system profiles for backups.
@@ -66,17 +60,11 @@ impl BuildSystems {
 		let hosts = opts.filter_skipped(config.list_hosts().await?).await?;
 		let set = LocalSet::new();
 		let build_attr = self.build_attr.clone();
-		// let batch = (hosts.len() > 1).then(|| {
-		// 	config
-		// 		.nix_session
-		// 		.new_build_batch("build-hosts".to_string())
-		// });
 		for host in hosts {
 			let config = config.clone();
 			let span = info_span!("build", host = field::display(&host.name));
 			let hostname = host.name;
 			let build_attr = build_attr.clone();
-			// let batch = batch.clone();
 			set.spawn_local(
 				(async move {
 					let built = match build_task(config, hostname.clone(), &build_attr).await {
@@ -107,11 +95,6 @@ impl Deploy {
 	pub async fn run(self, config: &Config, opts: &FleetOpts) -> Result<()> {
 		let hosts = opts.filter_skipped(config.list_hosts().await?).await?;
 		let set = LocalSet::new();
-		// let batch = (hosts.len() > 1).then(|| {
-		// 	config
-		// 		.nix_session
-		// 		.new_build_batch("deploy-hosts".to_string())
-		// });
 		for host in hosts.into_iter() {
 			let config = config.clone();
 			let span = info_span!("deploy", host = field::display(&host.name));
