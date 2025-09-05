@@ -60,5 +60,6 @@ struct TracingLogger : Logger {
 extern "C" {
 void apply_tracing_logger() {
   logger = std::make_unique<TracingLogger>();
+  // verbosity = lvlVomit;
 }
 }

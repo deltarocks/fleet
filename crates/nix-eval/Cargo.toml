@@ -19,6 +19,7 @@ cxx = "1.0.168"
 itertools = "0.14.0"
 test-log = { version = "0.2.18", features = ["trace"] }
 tracing-indicatif = { version = "0.3.13", optional = true }
+vte = { version = "0.15.0", features = ["ansi"] }
 
 [build-dependencies]
 bindgen = "0.72.0"

@@ -65,25 +65,28 @@ in
           normalEval = bootstrapNixpkgs.lib.evalModules {
             modules = (import ../modules/module-list.nix) ++ [
               module
-              ({inputs', ...}: {
-                config = {
-                  data = if isPath data then import data else data;
-                  nixpkgs.buildUsing = mkOptionDefault bootstrapNixpkgs;
-                  nixpkgs.overlays = [
-                    (final: prev: {
-                      inherit
-                        (import ../pkgs {
-                          inherit (prev) callPackage;
-                          inherit inputs';
-                          craneLib = crane.mkLib prev;
-                        })
-                        fleet-install-secrets
-                        fleet-generator-helper
-                        ;
-                    })
-                  ];
-                };
-              })
+              (
+                { inputs', ... }:
+                {
+                  config = {
+                    data = if isPath data then import data else data;
+                    nixpkgs.buildUsing = mkOptionDefault bootstrapNixpkgs;
+                    nixpkgs.overlays = [
+                      (final: prev: {
+                        inherit
+                          (import ../pkgs {
+                            inherit (prev) callPackage;
+                            inherit inputs';
+                            craneLib = crane.mkLib prev;
+                          })
+                          fleet-install-secrets
+                          fleet-generator-helper
+                          ;
+                      })
+                    ];
+                  };
+                }
+              )
             ];
             specialArgs = {
               inherit inputs self;

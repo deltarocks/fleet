@@ -19,12 +19,11 @@ use self::nix_raw::{
 	alloc_value, c_context, c_context_create, err_code, err_info_msg, eval_state_build,
 	eval_state_builder_new, expr_eval_from_string, fetchers_settings, fetchers_settings_free,
 	fetchers_settings_new, flake_lock, flake_lock_flags, flake_lock_flags_free,
-	flake_lock_flags_new, flake_lock_flags_set_mode_virtual, flake_reference_parse_flags,
-	flake_reference_parse_flags_free, flake_reference_parse_flags_new,
-	flake_reference_parse_flags_set_base_directory, flake_settings, flake_settings_free,
-	flake_settings_new, init_bool, init_int, init_string, locked_flake_free,
-	locked_flake_get_output_attrs, set_err_msg, setting_set, state_free, value_decref,
-	value_incref,
+	flake_lock_flags_new, flake_reference_parse_flags, flake_reference_parse_flags_free,
+	flake_reference_parse_flags_new, flake_reference_parse_flags_set_base_directory,
+	flake_settings, flake_settings_free, flake_settings_new, get_string, init_bool, init_int,
+	init_string, locked_flake_free, locked_flake_get_output_attrs, set_err_msg, setting_set,
+	state_free, value_decref, value_incref,
 };
 
 // Contains macros helpers
@@ -226,10 +225,14 @@ impl GlobalState {
 	fn new() -> Result<Self> {
 		let mut ctx = NixContext::new();
 		let store = ctx
-			.run_in_context(|c| unsafe { nix_raw::store_open(c, c"daemon".as_ptr(), null_mut()) })
+			.run_in_context(|c| unsafe { nix_raw::store_open(c, c"auto".as_ptr(), null_mut()) })
 			.map(Store)?;
 
 		let builder = ctx.run_in_context(|c| unsafe { eval_state_builder_new(c, store.0) })?;
+		ctx.run_in_context(|c| {
+			unsafe { nix_raw::eval_state_builder_load(c, builder) }
+			// eval_s
+		})?;
 		ctx.run_in_context(|c| {
 			unsafe {
 				nix_raw::eval_state_builder_set_eval_setting(
@@ -363,12 +366,12 @@ impl Drop for FlakeReferenceParseFlags {
 		}
 	}
 }
-struct FlakeLockFlags(*mut flake_lock_flags);
+pub struct FlakeLockFlags(*mut flake_lock_flags);
 impl FlakeLockFlags {
-	fn new(settings: &mut FlakeSettings) -> Result<Self> {
+	pub fn new(settings: &FlakeSettings) -> Result<Self> {
 		let o = with_default_context(|c, _| unsafe { flake_lock_flags_new(c, settings.0) })
 			.map(Self)?;
-		with_default_context(|c, _| unsafe { flake_lock_flags_set_mode_virtual(c, o.0) })?;
+		// with_default_context(|c, _| unsafe { flake_lock_flags_set_mode_virtual(c, o.0) })?;
 
 		Ok(o)
 	}
@@ -432,14 +435,15 @@ impl FlakeReference {
 
 		Ok((Self(out), fragment))
 	}
-	#[instrument(name = "lock-flake", skip(self, fetch))]
-	pub fn lock(&mut self, fetch: &FetchSettings) -> Result<LockedFlake> {
-		let mut settings = FlakeSettings::new()?;
-		let lock_flags = FlakeLockFlags::new(&mut settings)?;
-		with_default_context(|c, es| unsafe {
-			flake_lock(c, fetch.0, settings.0, es, lock_flags.0, self.0)
-		})
-		.map(LockedFlake)
+	#[instrument(name = "lock-flake", skip(self, fetch, flake, lock))]
+	pub fn lock(
+		&mut self,
+		fetch: &FetchSettings,
+		flake: &FlakeSettings,
+		lock: &FlakeLockFlags,
+	) -> Result<LockedFlake> {
+		with_default_context(|c, es| unsafe { flake_lock(c, fetch.0, flake.0, es, lock.0, self.0) })
+			.map(LockedFlake)
 	}
 }
 unsafe impl Send for FlakeReference {}
@@ -611,8 +615,17 @@ impl Value {
 			.expect("get_type should not fail");
 		NixType::from_int(ty)
 	}
+	fn builtin_to_string(&self) -> Result<Self> {
+		let builtin = Self::eval("builtins.toString")?;
+		builtin.call(self.clone())
+	}
 	pub fn to_string(&self) -> Result<String> {
-		Ok(self.to_realised_string()?.as_str().to_owned())
+		let mut str_out = String::new();
+		with_default_context(|c, _| unsafe {
+			get_string(c, self.0, Some(copy_nix_str), (&raw mut str_out).cast())
+		})?;
+
+		Ok(str_out)
 	}
 	pub fn to_realised_string(&self) -> Result<RealisedString> {
 		with_default_context(|c, es| unsafe { nix_raw::string_realise(c, es, self.0, false) })
@@ -751,10 +764,11 @@ impl Value {
 			self.clone()
 		};
 		// to_string here blocks until the path is built
-		let drv_path = tokio::task::spawn_blocking(move || v.get_field("outPath")?.to_string())
-			.await
-			.expect("should not fail")?;
-		Ok(PathBuf::from(drv_path))
+		let drv_path =
+			tokio::task::spawn_blocking(move || v.builtin_to_string()?.to_realised_string())
+				.await
+				.expect("spawn should not fail")?;
+		Ok(PathBuf::from(drv_path.as_str()))
 	}
 	pub fn as_json<T: DeserializeOwned>(&self) -> Result<T> {
 		let to_json = Self::eval("builtins.toJSON")?;
@@ -835,6 +849,9 @@ impl Drop for Value {
 
 pub fn init_libraries() {
 	unsafe { nix_raw::GC_allow_register_threads() };
+	unsafe {
+		nix_raw::GC_init();
+	};
 
 	let mut ctx = NixContext::new();
 	ctx.run_in_context(|c| unsafe { nix_raw::libutil_init(c) })

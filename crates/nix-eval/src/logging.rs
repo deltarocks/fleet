@@ -8,6 +8,7 @@ use tracing::{
 };
 #[cfg(feature = "indicatif")]
 use tracing_indicatif::span_ext::IndicatifSpanExt as _;
+use vte::Parser;
 
 #[derive(Debug)]
 enum ActivityType {
@@ -374,6 +375,7 @@ impl StartActivityBuilder {
 			}
 		};
 		if !s.trim().is_empty() {
+			let s = ansi_filter(s);
 			#[cfg(feature = "indicatif")]
 			{
 				span.pb_set_message(s);
@@ -413,7 +415,8 @@ impl StartActivityBuilder {
 		match (&res, self.fields.as_slice()) {
 			// ResultType::FileLinked => todo!(),
 			(ResultType::BuildLogLine, [Str(s)]) => {
-				info!("{s:?}");
+				let s = ansi_filter(s);
+				info!("{s}");
 			}
 			// ResultType::UntrustedPath => todo!(),
 			// ResultType::CorruptedPath => todo!(),
@@ -466,6 +469,68 @@ fn emit_log(lvl: u32, v: &str) {
 	} else {
 		trace!(target: "nix", "{v}")
 	}
+}
+
+struct AnsiFiltered {
+	output: String,
+}
+impl vte::Perform for AnsiFiltered {
+	fn print(&mut self, c: char) {
+		self.output.push(c);
+	}
+
+	fn execute(&mut self, byte: u8) {
+		// We don't want \r, bells, etc
+		if byte == b'\n' {
+			self.output.push('\n');
+		} else if byte == b'\t' {
+			// TODO: align output to the correct multiplier?
+			self.output.push('\t');
+		}
+	}
+
+	fn osc_dispatch(&mut self, _params: &[&[u8]], _bell_terminated: bool) {}
+	fn esc_dispatch(&mut self, _intermediates: &[u8], _ignore: bool, _byte: u8) {}
+
+	fn csi_dispatch(
+		&mut self,
+		params: &vte::Params,
+		_intermediates: &[u8],
+		_ignore: bool,
+		action: char,
+	) {
+		use std::fmt::Write;
+		if action != 'm' {
+			// Only plain colors are enabled, everything other might corrupt the output
+			return;
+		}
+		self.output.push_str("IDK\x1b[");
+		for (i, par) in params.iter().enumerate() {
+			if i != 0 {
+				let _ = write!(self.output, ";");
+			}
+			for (i, sub) in par.iter().enumerate() {
+				if i != 0 {
+					let _ = write!(self.output, ":");
+				}
+				let _ = write!(self.output, "{sub}");
+			}
+		}
+		self.output.push(action);
+	}
+}
+fn ansi_filter(i: &str) -> String {
+	let mut out = AnsiFiltered {
+		output: String::new(),
+	};
+	let mut parser = Parser::new();
+
+	// For some reason it gets stuck with longer inputs
+	for chunk in i.as_bytes().chunks(50) {
+		parser.advance(&mut out, chunk);
+	}
+
+	out.output
 }
 
 #[cxx::bridge]

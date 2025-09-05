@@ -8,8 +8,8 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use nix_eval::{
-	FetchSettings, FlakeReference, FlakeReferenceParseFlags, FlakeSettings, Value, nix_go,
-	util::assert_warn,
+	FetchSettings, FlakeLockFlags, FlakeReference, FlakeReferenceParseFlags, FlakeSettings, Value,
+	nix_go, util::assert_warn,
 };
 use nom::{
 	Parser,
@@ -229,7 +229,10 @@ impl FleetOpts {
 			&parse,
 			&fetch_settings,
 		)?;
-		let flake = flake.lock(&fetch_settings)?;
+
+		let lock = FlakeLockFlags::new(&flake_settings)?;
+
+		let flake = flake.lock(&fetch_settings, &flake_settings, &lock)?;
 
 		let flake = flake.get_attrs(&mut flake_settings)?;
 

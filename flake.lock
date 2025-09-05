@@ -104,10 +104,10 @@
         "nixpkgs-regression": "nixpkgs-regression"
       },
       "locked": {
-        "lastModified": 1757000273,
+        "lastModified": 1757031817,
         "owner": "deltarocks",
         "repo": "nix",
-        "rev": "eba1f549ec21208cf98343f1351a95e2e6eb3fbb",
+        "rev": "2261305161dc02496c8aedcdda14ace04b9b1dc1",
         "type": "github"
       },
       "original": {
