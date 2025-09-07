@@ -27,7 +27,7 @@ use nix_eval::{gc_register_my_thread, gc_unregister_my_thread, init_libraries};
 use tracing::{Instrument, error, info, info_span};
 #[cfg(feature = "indicatif")]
 use tracing_indicatif::IndicatifLayer;
-use tracing_subscriber::{EnvFilter, prelude::*};
+use tracing_subscriber::{fmt::format::Format, prelude::*, EnvFilter};
 
 #[derive(Parser)]
 struct Prefetch {}

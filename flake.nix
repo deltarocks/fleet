@@ -114,7 +114,13 @@
           {
             _module.args.pkgs = import inputs.nixpkgs {
               inherit system;
-              overlays = [ (inputs.rust-overlay.overlays.default) ];
+              overlays = [ (inputs.rust-overlay.overlays.default) (final: prev: {
+                boehmgc = prev.boehmgc.overrideAttrs (prevAttrs: {
+                  configureFlags = prevAttrs.configureFlags ++ [
+                    "--enable-gc-assertions"
+                  ];
+                });
+              }) ];
             };
             # Reference fleet package should be built with nightly rust, specified in rust-toolchain.toml.
             packages = lib.mkIf deployerSystem (
@@ -157,7 +163,6 @@
               factory = craneLib.devShell;
               packages = with pkgs; [
                 rust
-                alejandra
                 cargo-edit
                 cargo-udeps
                 cargo-fuzz

@@ -1,29 +1,42 @@
+use std::alloc::{GlobalAlloc, Layout};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
-use std::fmt;
+use std::mem::forget;
 use std::ptr::null_mut;
 use std::sync::LazyLock;
 use std::{collections::HashMap, path::PathBuf};
+use std::{fmt, slice};
 
 use anyhow::{Context, anyhow, bail};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 pub use anyhow::Result;
-use tracing::instrument;
+use tracing::{info, instrument};
 
 use self::logging::nix_logging_cxx;
 use self::nix_cxx::set_fetcher_setting;
 use self::nix_raw::{
-	alloc_value, c_context, c_context_create, err_code, err_info_msg, eval_state_build,
-	eval_state_builder_new, expr_eval_from_string, fetchers_settings, fetchers_settings_free,
-	fetchers_settings_new, flake_lock, flake_lock_flags, flake_lock_flags_free,
-	flake_lock_flags_new, flake_reference_parse_flags, flake_reference_parse_flags_free,
-	flake_reference_parse_flags_new, flake_reference_parse_flags_set_base_directory,
-	flake_settings, flake_settings_free, flake_settings_new, get_string, init_bool, init_int,
-	init_string, locked_flake_free, locked_flake_get_output_attrs, set_err_msg, setting_set,
-	state_free, value_decref, value_incref,
+	BindingsBuilder as c_bindings_builder, EvalState as c_eval_state, GC_SUCCESS,
+	GC_allow_register_threads, GC_free, GC_get_stack_base, GC_init, GC_malloc, GC_realloc,
+	GC_register_my_thread, GC_stack_base, GC_thread_is_registered, GC_unregister_my_thread,
+	Store as c_store, alloc_value, bindings_builder_free, bindings_builder_insert, c_context,
+	c_context_create, c_context_free, clear_err, err_code, err_info_msg, err_msg, eval_state_build,
+	eval_state_builder_load, eval_state_builder_new, eval_state_builder_set_eval_setting,
+	expr_eval_from_string, fetchers_settings, fetchers_settings_free, fetchers_settings_new,
+	flake_lock, flake_lock_flags, flake_lock_flags_free, flake_lock_flags_new, flake_reference,
+	flake_reference_and_fragment_from_string, flake_reference_parse_flags,
+	flake_reference_parse_flags_free, flake_reference_parse_flags_new,
+	flake_reference_parse_flags_set_base_directory, flake_settings, flake_settings_free,
+	flake_settings_new, get_attr_byname, get_attr_name_byidx, get_attrs_size, get_list_byidx,
+	get_list_size, get_string, get_type, has_attr_byname, init_bool, init_int, init_string,
+	libexpr_init, libstore_init, libutil_init, locked_flake, locked_flake_free,
+	locked_flake_get_output_attrs, make_attrs, make_bindings_builder, realised_string,
+	realised_string_free, realised_string_get_buffer_size, realised_string_get_buffer_start,
+	realised_string_get_store_path, realised_string_get_store_path_count, set_err_msg, setting_set,
+	state_free, store_open, store_path_name, string_realise, value, value_call, value_decref,
+	value_incref,
 };
 
 // Contains macros helpers
@@ -117,22 +130,26 @@ impl NixErrorKind {
 	}
 }
 
-pub fn gc_register_my_thread() {
-	assert_eq!(unsafe { nix_raw::GC_thread_is_registered() }, 0);
+pub fn gc_now() {
+	unsafe { nix_raw::gc_now() };
+}
 
-	let mut sb = nix_raw::GC_stack_base {
+pub fn gc_register_my_thread() {
+	assert_eq!(unsafe { GC_thread_is_registered() }, 0);
+
+	let mut sb = GC_stack_base {
 		mem_base: null_mut(),
 	};
-	let r = unsafe { nix_raw::GC_get_stack_base(&mut sb) };
-	if r as u32 != nix_raw::GC_SUCCESS {
+	let r = unsafe { GC_get_stack_base(&mut sb) };
+	if r as u32 != GC_SUCCESS {
 		panic!("failed to get thread stack base");
 	}
-	unsafe { nix_raw::GC_register_my_thread(&sb) };
+	unsafe { GC_register_my_thread(&sb) };
 }
 pub fn gc_unregister_my_thread() {
-	assert_eq!(unsafe { nix_raw::GC_thread_is_registered() }, 1);
+	assert_eq!(unsafe { GC_thread_is_registered() }, 1);
 
-	unsafe { nix_raw::GC_unregister_my_thread() };
+	unsafe { GC_unregister_my_thread() };
 }
 
 pub struct ThreadRegisterGuard {}
@@ -178,12 +195,12 @@ impl NixContext {
 
 		// TODO: Can throw error (resulting in panic) if unable to retrieve error. Should be able to resolve by passing context as a first argument,
 		// but it looks ugly
-		let str = unsafe { nix_raw::err_msg(null_mut(), self.0, null_mut()) };
+		let str = unsafe { err_msg(null_mut(), self.0, null_mut()) };
 		Some(unsafe { CStr::from_ptr(str) }.to_string_lossy())
 	}
 	fn clean_err(&mut self) {
 		unsafe {
-			nix_raw::clear_err(self.0);
+			clear_err(self.0);
 		}
 	}
 
@@ -211,7 +228,7 @@ impl Default for NixContext {
 impl Drop for NixContext {
 	fn drop(&mut self) {
 		unsafe {
-			nix_raw::c_context_free(self.0);
+			c_context_free(self.0);
 		}
 	}
 }
@@ -225,35 +242,26 @@ impl GlobalState {
 	fn new() -> Result<Self> {
 		let mut ctx = NixContext::new();
 		let store = ctx
-			.run_in_context(|c| unsafe { nix_raw::store_open(c, c"auto".as_ptr(), null_mut()) })
+			.run_in_context(|c| unsafe { store_open(c, c"auto".as_ptr(), null_mut()) })
 			.map(Store)?;
 
 		let builder = ctx.run_in_context(|c| unsafe { eval_state_builder_new(c, store.0) })?;
-		ctx.run_in_context(|c| {
-			unsafe { nix_raw::eval_state_builder_load(c, builder) }
-			// eval_s
+		ctx.run_in_context(|c| unsafe { eval_state_builder_load(c, builder) })?;
+		ctx.run_in_context(|c| unsafe {
+			eval_state_builder_set_eval_setting(
+				c,
+				builder,
+				c"lazy-trees".as_ptr(),
+				c"true".as_ptr(),
+			)
 		})?;
-		ctx.run_in_context(|c| {
-			unsafe {
-				nix_raw::eval_state_builder_set_eval_setting(
-					c,
-					builder,
-					c"lazy-trees".as_ptr(),
-					c"true".as_ptr(),
-				)
-			}
-			// eval_s
-		})?;
-		ctx.run_in_context(|c| {
-			unsafe {
-				nix_raw::eval_state_builder_set_eval_setting(
-					c,
-					builder,
-					c"lazy-locks".as_ptr(),
-					c"true".as_ptr(),
-				)
-			}
-			// eval_s
+		ctx.run_in_context(|c| unsafe {
+			eval_state_builder_set_eval_setting(
+				c,
+				builder,
+				c"lazy-locks".as_ptr(),
+				c"true".as_ptr(),
+			)
 		})?;
 		let state = ctx
 			.run_in_context(|c| unsafe { eval_state_build(c, builder) })
@@ -280,9 +288,7 @@ static GLOBAL_STATE: LazyLock<GlobalState> =
 thread_local! {
 	static THREAD_STATE: RefCell<ThreadState> = RefCell::new(ThreadState::new().expect("thread state init shouldn't fail"));
 }
-fn with_default_context<T>(
-	f: impl FnOnce(*mut c_context, *mut nix_raw::EvalState) -> T,
-) -> Result<T> {
+fn with_default_context<T>(f: impl FnOnce(*mut c_context, *mut c_eval_state) -> T) -> Result<T> {
 	let global = &GLOBAL_STATE.state;
 	let (ctx, state) = THREAD_STATE.with_borrow_mut(|w| (w.ctx.0, global.0));
 	let mut ctx = NixContext(ctx);
@@ -385,16 +391,16 @@ impl Drop for FlakeLockFlags {
 }
 
 unsafe extern "C" fn copy_nix_str(start: *const c_char, n: c_uint, user_data: *mut c_void) {
-	let s = unsafe { std::slice::from_raw_parts(start.cast::<u8>(), n as usize) };
+	let s = unsafe { slice::from_raw_parts(start.cast::<u8>(), n as usize) };
 	let s = std::str::from_utf8(s).expect("c string has invalid utf-8");
 	unsafe { *user_data.cast::<String>() = s.to_owned() };
 }
 
-struct Store(*mut nix_raw::Store);
+struct Store(*mut c_store);
 unsafe impl Send for Store {}
 unsafe impl Sync for Store {}
 
-struct EvalState(*mut nix_raw::EvalState);
+struct EvalState(*mut c_eval_state);
 unsafe impl Send for EvalState {}
 unsafe impl Sync for EvalState {}
 
@@ -406,7 +412,7 @@ impl Drop for EvalState {
 	}
 }
 
-pub struct FlakeReference(*mut nix_raw::flake_reference);
+pub struct FlakeReference(*mut flake_reference);
 impl FlakeReference {
 	#[instrument(name = "new-flake-reference", skip(flake, parse, fetch))]
 	pub fn new(
@@ -419,7 +425,7 @@ impl FlakeReference {
 		let mut fragment = String::new();
 		// let fetch_settings = fetcher_settings;
 		with_default_context(|c, _| unsafe {
-			nix_raw::flake_reference_and_fragment_from_string(
+			flake_reference_and_fragment_from_string(
 				c,
 				fetch.0,
 				flake.0,
@@ -449,7 +455,7 @@ impl FlakeReference {
 unsafe impl Send for FlakeReference {}
 unsafe impl Sync for FlakeReference {}
 
-pub struct LockedFlake(*mut nix_raw::locked_flake);
+pub struct LockedFlake(*mut locked_flake);
 impl LockedFlake {
 	pub fn get_attrs(&self, settings: &mut FlakeSettings) -> Result<Value> {
 		with_default_context(|c, es| unsafe {
@@ -480,7 +486,7 @@ fn init_field_name(v: &str) -> FieldName {
 	f
 }
 
-pub struct RealisedString(*mut nix_raw::realised_string);
+pub struct RealisedString(*mut realised_string);
 impl fmt::Debug for RealisedString {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		self.as_str().fmt(f)
@@ -489,19 +495,19 @@ impl fmt::Debug for RealisedString {
 
 impl RealisedString {
 	pub fn as_str(&self) -> &str {
-		let len = unsafe { nix_raw::realised_string_get_buffer_size(self.0) };
-		let data: *const u8 = unsafe { nix_raw::realised_string_get_buffer_start(self.0) }.cast();
-		let data = unsafe { std::slice::from_raw_parts(data, len) };
+		let len = unsafe { realised_string_get_buffer_size(self.0) };
+		let data: *const u8 = unsafe { realised_string_get_buffer_start(self.0) }.cast();
+		let data = unsafe { slice::from_raw_parts(data, len) };
 		std::str::from_utf8(data).expect("non-utf8 strings not supported")
 	}
 	pub fn path_count(&self) -> usize {
-		unsafe { nix_raw::realised_string_get_store_path_count(self.0) }
+		unsafe { realised_string_get_store_path_count(self.0) }
 	}
 	pub fn path(&self, i: usize) -> String {
 		assert!(i < self.path_count());
-		let path = unsafe { nix_raw::realised_string_get_store_path(self.0, i) };
+		let path = unsafe { realised_string_get_store_path(self.0, i) };
 		let mut err_out = String::new();
-		unsafe { nix_raw::store_path_name(path, Some(copy_nix_str), (&raw mut err_out).cast()) };
+		unsafe { store_path_name(path, Some(copy_nix_str), (&raw mut err_out).cast()) };
 		err_out
 	}
 }
@@ -509,11 +515,11 @@ impl RealisedString {
 unsafe impl Send for RealisedString {}
 impl Drop for RealisedString {
 	fn drop(&mut self) {
-		unsafe { nix_raw::realised_string_free(self.0) }
+		unsafe { realised_string_free(self.0) }
 	}
 }
 
-pub struct Value(*mut nix_raw::value);
+pub struct Value(*mut value);
 
 unsafe impl Send for Value {}
 unsafe impl Sync for Value {}
@@ -544,17 +550,18 @@ where
 	}
 }
 
-struct AttrsBuilder(*mut nix_raw::BindingsBuilder);
+struct AttrsBuilder(*mut c_bindings_builder);
 impl AttrsBuilder {
 	fn new(capacity: usize) -> Self {
-		with_default_context(|c, es| unsafe { nix_raw::make_bindings_builder(c, es, capacity) })
+		with_default_context(|c, es| unsafe { make_bindings_builder(c, es, capacity) })
 			.map(Self)
 			.expect("alloc should not fail")
 	}
 	fn insert(&mut self, k: &impl AsFieldName, v: Value) {
 		k.as_field_name(|name| {
 			with_default_context(|c, _| unsafe {
-				nix_raw::bindings_builder_insert(c, self.0, name.as_ptr().cast(), v.0)
+				bindings_builder_insert(c, self.0, name.as_ptr().cast(), v.0);
+				// bindings_builder_insert doesn't do incref
 			})
 		})
 		.expect("builder insert shouldn't fail");
@@ -562,7 +569,7 @@ impl AttrsBuilder {
 }
 impl Drop for AttrsBuilder {
 	fn drop(&mut self) {
-		unsafe { nix_raw::bindings_builder_free(self.0) };
+		unsafe { bindings_builder_free(self.0) };
 	}
 }
 
@@ -573,8 +580,9 @@ impl Value {
 		for (k, v) in v {
 			b.insert(&k, v);
 		}
-		with_default_context(|c, _| unsafe { nix_raw::make_attrs(c, out.0, b.0) })
+		with_default_context(|c, _| unsafe { make_attrs(c, out.0, b.0) })
 			.expect("attrs initialization should not fail");
+
 		out
 	}
 	fn new_list<T: Into<Self>>(v: Vec<T>) -> Self {
@@ -611,7 +619,7 @@ impl Value {
 	// 	Ok(())
 	// }
 	pub fn type_of(&self) -> NixType {
-		let ty = with_default_context(|c, _| unsafe { nix_raw::get_type(c, self.0) })
+		let ty = with_default_context(|c, _| unsafe { get_type(c, self.0) })
 			.expect("get_type should not fail");
 		NixType::from_int(ty)
 	}
@@ -628,7 +636,7 @@ impl Value {
 		Ok(str_out)
 	}
 	pub fn to_realised_string(&self) -> Result<RealisedString> {
-		with_default_context(|c, es| unsafe { nix_raw::string_realise(c, es, self.0, false) })
+		with_default_context(|c, es| unsafe { string_realise(c, es, self.0, false) })
 			.map(RealisedString)
 
 		// let store_paths = unsafe { nix_raw::realised_string_get_store_path_count(str) };
@@ -642,9 +650,7 @@ impl Value {
 
 	pub fn has_field(&self, field: &str) -> Result<bool> {
 		let f = init_field_name(field);
-		with_default_context(|c, es| unsafe {
-			nix_raw::has_attr_byname(c, self.0, es, f.as_ptr().cast())
-		})
+		with_default_context(|c, es| unsafe { has_attr_byname(c, self.0, es, f.as_ptr().cast()) })
 	}
 	// pub fn derivation_path(&self) {
 	// 	nix_raw::real
@@ -654,13 +660,12 @@ impl Value {
 			bail!("invalid type: expected attrs");
 		}
 
-		let len = with_default_context(|c, _| unsafe { nix_raw::get_attrs_size(c, self.0) })?;
+		let len = with_default_context(|c, _| unsafe { get_attrs_size(c, self.0) })?;
 		let mut out = Vec::with_capacity(len as usize);
 
 		for i in 0..len {
-			let name = with_default_context(|c, es| unsafe {
-				nix_raw::get_attr_name_byidx(c, self.0, es, i)
-			})?;
+			let name =
+				with_default_context(|c, es| unsafe { get_attr_name_byidx(c, self.0, es, i) })?;
 			let c = unsafe { CStr::from_ptr(name) };
 			out.push(c.to_str().expect("nix field names are utf-8").to_owned());
 		}
@@ -670,14 +675,12 @@ impl Value {
 		if !matches!(self.type_of(), NixType::List) {
 			bail!("invalid type: expected list");
 		}
-		let len =
-			with_default_context(|c, _| unsafe { nix_raw::get_list_size(c, self.0) })? as usize;
+		let len = with_default_context(|c, _| unsafe { get_list_size(c, self.0) })? as usize;
 		if v >= len {
 			bail!("oob list get: {v} >= {len}");
 		}
 
-		with_default_context(|c, es| unsafe { nix_raw::get_list_byidx(c, self.0, es, v as u32) })
-			.map(Self)
+		with_default_context(|c, es| unsafe { get_list_byidx(c, self.0, es, v as u32) }).map(Self)
 	}
 	pub fn attrs_update(self, other: Value) -> Result<Self> {
 		let a_fields = self.list_fields()?;
@@ -710,7 +713,7 @@ impl Value {
 
 		name.as_field_name(|name| {
 			with_default_context(|c, es| unsafe {
-				nix_raw::get_attr_byname(c, self.0, es, name.as_ptr().cast())
+				get_attr_byname(c, self.0, es, name.as_ptr().cast())
 			})
 			.map(Self)
 		})
@@ -735,9 +738,7 @@ impl Value {
 		};
 
 		let out = Value::new_uninit();
-		with_default_context(|c, es| unsafe {
-			nix_raw::value_call(c, es, function.0, v.0, out.0)
-		})?;
+		with_default_context(|c, es| unsafe { value_call(c, es, function.0, v.0, out.0) })?;
 
 		Ok(out)
 	}
@@ -745,7 +746,7 @@ impl Value {
 		let s = CString::new(v).expect("expression shouldn't have internal NULs");
 		let out = Self::new_uninit();
 		with_default_context(|c, es| unsafe {
-			expr_eval_from_string(c, es, s.as_ptr(), c"/homeless-shelter".as_ptr(), out.0)
+			expr_eval_from_string(c, es, s.as_ptr(), c"/root".as_ptr(), out.0)
 		})?;
 		Ok(out)
 	}
@@ -764,11 +765,10 @@ impl Value {
 			self.clone()
 		};
 		// to_string here blocks until the path is built
-		let drv_path =
-			tokio::task::spawn_blocking(move || v.builtin_to_string()?.to_realised_string())
-				.await
-				.expect("spawn should not fail")?;
-		Ok(PathBuf::from(drv_path.as_str()))
+		let s = v.builtin_to_string()?;
+		let rs = s.to_realised_string()?;
+		let drv_path = rs.as_str().to_owned();
+		Ok(PathBuf::from(drv_path))
 	}
 	pub fn as_json<T: DeserializeOwned>(&self) -> Result<T> {
 		let to_json = Self::eval("builtins.toJSON")?;
@@ -848,17 +848,14 @@ impl Drop for Value {
 }
 
 pub fn init_libraries() {
-	unsafe { nix_raw::GC_allow_register_threads() };
-	unsafe {
-		nix_raw::GC_init();
-	};
+	unsafe { GC_allow_register_threads() };
 
 	let mut ctx = NixContext::new();
-	ctx.run_in_context(|c| unsafe { nix_raw::libutil_init(c) })
+	ctx.run_in_context(|c| unsafe { libutil_init(c) })
 		.expect("util init should not fail");
-	ctx.run_in_context(|c| unsafe { nix_raw::libstore_init(c) })
+	ctx.run_in_context(|c| unsafe { libstore_init(c) })
 		.expect("store init should not fail");
-	ctx.run_in_context(|c| unsafe { nix_raw::libexpr_init(c) })
+	ctx.run_in_context(|c| unsafe { libexpr_init(c) })
 		.expect("expr init should not fail");
 
 	nix_logging_cxx::apply_tracing_logger();
@@ -872,8 +869,11 @@ fn test_native() -> Result<()> {
 	fetch_settings.set(c"warn-dirty", c"false");
 
 	let manifest = format!("{}/../../", env!("CARGO_MANIFEST_DIR"));
-	let (mut r, _) = FlakeReference::new(&manifest, &fetch_settings)?;
-	let locked = r.lock(&fetch_settings)?;
+	let flake = FlakeSettings::new()?;
+	let parse = FlakeReferenceParseFlags::new(&flake)?;
+	let (mut r, _) = FlakeReference::new(&manifest, &flake, &parse, &fetch_settings)?;
+	let lock = FlakeLockFlags::new(&flake)?;
+	let locked = r.lock(&fetch_settings, &flake, &lock)?;
 	let attrs = locked.get_attrs(&mut FlakeSettings::new()?)?;
 
 	let builtins = Value::eval("builtins")?;
@@ -887,3 +887,22 @@ fn test_native() -> Result<()> {
 
 	Ok(())
 }
+
+// pub struct GcAlloc;
+// unsafe impl GlobalAlloc for GcAlloc {
+// 	unsafe fn alloc(&self, l: Layout) -> *mut u8 {
+// 		let ptr = unsafe { GC_malloc(l.size()) };
+// 		ptr.cast()
+// 	}
+// 	unsafe fn dealloc(&self, ptr: *mut u8, _: Layout) {
+// 		// unsafe { GC_free(ptr.cast()) };
+// 	}
+//
+// 	unsafe fn realloc(&self, ptr: *mut u8, _: Layout, new_size: usize) -> *mut u8 {
+// 		let ptr = unsafe { GC_realloc(ptr.cast(), new_size) };
+// 		ptr.cast()
+// 	}
+// }
+//
+// #[global_allocator]
+// static GC: GcAlloc = GcAlloc;

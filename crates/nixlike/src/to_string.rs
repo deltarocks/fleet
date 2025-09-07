@@ -1,5 +1,3 @@
-use alejandra::config::Indentation;
-
 use crate::Value;
 
 pub fn write_identifier(k: &str, out: &mut String) {
@@ -100,12 +98,5 @@ fn write_nix_buf(value: &Value, out: &mut String) {
 pub fn write_nix(value: &Value) -> String {
 	let mut out = String::new();
 	write_nix_buf(value, &mut out);
-	let (_, out) = alejandra::format::in_memory(
-		"".to_owned(),
-		out,
-		alejandra::config::Config {
-			indentation: Indentation::TwoSpaces,
-		},
-	);
 	out
 }

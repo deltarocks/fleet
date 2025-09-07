@@ -504,7 +504,7 @@ impl vte::Perform for AnsiFiltered {
 			// Only plain colors are enabled, everything other might corrupt the output
 			return;
 		}
-		self.output.push_str("IDK\x1b[");
+		self.output.push_str("\x1b[");
 		for (i, par) in params.iter().enumerate() {
 			if i != 0 {
 				let _ = write!(self.output, ";");

@@ -5,7 +5,6 @@
 //! expressions and expect it to work, only basic primitives are supported, and there is no
 //! variables/recursive records, interpolation, e.t.c.
 
-use alejandra::config::Indentation;
 use linked_hash_map::LinkedHashMap;
 use peg::str::LineCol;
 use se_impl::MySerialize;
@@ -197,14 +196,8 @@ fn test() {
 	assert_eq!(serialize("Hello\nworld").unwrap(), "\"Hello\\nworld\"\n");
 }
 pub fn format_nix(value: &String) -> String {
-	let (_, out) = alejandra::format::in_memory(
-		"".to_owned(),
-		value.to_owned(),
-		alejandra::config::Config {
-			indentation: Indentation::TwoSpaces,
-		},
-	);
-	out
+	// TODO
+	value.to_owned()
 }
 
 #[test]

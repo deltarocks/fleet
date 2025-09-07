@@ -9,7 +9,7 @@ use std::{
 use anyhow::{Context, Result, bail};
 use nix_eval::{
 	FetchSettings, FlakeLockFlags, FlakeReference, FlakeReferenceParseFlags, FlakeSettings, Value,
-	nix_go, util::assert_warn,
+	gc_now, nix_go, util::assert_warn,
 };
 use nom::{
 	Parser,
@@ -259,6 +259,10 @@ impl FleetOpts {
 			overlays,
 			system: self.local_system.clone(),
 		}));
+
+		if cfg!(debug_assertions) {
+			gc_now();
+		}
 
 		Ok(Config(Arc::new(FleetConfigInternals {
 			directory,
