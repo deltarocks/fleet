@@ -474,10 +474,10 @@ impl Drop for LockedFlake {
 	}
 }
 
-type FieldName = [u8; 32];
+type FieldName = [u8; 64];
 fn init_field_name(v: &str) -> FieldName {
-	let mut f = [0; 32];
-	assert!(v.len() < 32, "max field name is 31 char");
+	let mut f = [0; 64];
+	assert!(v.len() < 64, "max field name is 63 chars");
 	assert!(
 		v.bytes().all(|v| v != 0),
 		"nul bytes are unsupported in field name"
