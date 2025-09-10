@@ -1,0 +1,15 @@
+[package]
+name = "opentelemetry-exporter-env"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+clap = { workspace = true, optional = true }
+opentelemetry-otlp = { version = "0.30.0", features = ["grpc-tonic", "gzip-tonic", "http-json"], optional = true }
+thiserror.workspace = true
+
+[features]
+default = ["clap", "otlp"]
+clap = ["dep:clap"]
+otlp = ["dep:opentelemetry-otlp"]

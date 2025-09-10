@@ -4,7 +4,7 @@ pub(crate) mod cmds;
 // pub(crate) mod command;
 pub(crate) mod extra_args;
 
-use std::{ffi::OsString, process::ExitCode};
+use std::{env, ffi::OsString, process::ExitCode};
 
 use anyhow::{Result, bail};
 use clap::{CommandFactory, Parser};
@@ -27,7 +27,7 @@ use nix_eval::{gc_register_my_thread, gc_unregister_my_thread, init_libraries};
 use tracing::{Instrument, error, info, info_span};
 #[cfg(feature = "indicatif")]
 use tracing_indicatif::IndicatifLayer;
-use tracing_subscriber::{fmt::format::Format, prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt::format::Format, prelude::*};
 
 #[derive(Parser)]
 struct Prefetch {}
@@ -170,6 +170,9 @@ fn setup_logging() {
 		let sub = sub.with_writer(indicatif_layer.get_stderr_writer());
 		sub.with_filter(filter) // .without,
 	});
+
+	if env::var_os("FLEET_OTEL").is_some() {}
+
 	// #[cfg(feature = "indicatif")]
 	#[cfg(feature = "indicatif")]
 	let reg = reg.with(indicatif_layer);
