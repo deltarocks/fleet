@@ -300,8 +300,9 @@ impl StartActivityBuilder {
 	fn add_int_field(&mut self, i: i32) {
 		self.fields.push(FieldValue::Int(i));
 	}
-	fn add_string_field(&mut self, v: &str) {
-		self.fields.push(FieldValue::Str(v.to_owned()));
+	fn add_string_field(&mut self, v: &[u8]) {
+		let v = String::from_utf8_lossy(v);
+		self.fields.push(FieldValue::Str(v.to_string()));
 	}
 	fn emit(&mut self, parent: u64, s: &str) {
 		let mut mapping = NIX_SPAN_MAPPING.lock().expect("not poisoned");
@@ -455,9 +456,10 @@ fn emit_stop(v: u64) {
 	let mut mapping = NIX_SPAN_MAPPING.lock().expect("not poisoned");
 	mapping.remove(&v);
 }
-fn emit_log(lvl: u32, v: &str) {
+fn emit_log(lvl: u32, v: &[u8]) {
 	let verbosity = Verbosity::from_int(lvl);
 	let level: Level = verbosity.into();
+	let v = String::from_utf8_lossy(v);
 	if level == Level::ERROR {
 		error!(target: "nix", "{v}")
 	} else if level == Level::WARN {
@@ -539,13 +541,13 @@ pub mod nix_logging_cxx {
 		type StartActivityBuilder;
 		fn new_start_activity(activity_id: u64, lvl: u32, typ: u32) -> Box<StartActivityBuilder>;
 		fn add_int_field(&mut self, i: i32);
-		fn add_string_field(&mut self, v: &str);
+		fn add_string_field(&mut self, v: &[u8]);
 		fn emit(&mut self, parent: u64, s: &str);
 		fn emit_result(&mut self, ty: u32);
 
 		fn emit_warn(v: &str);
 		fn emit_stop(id: u64);
-		fn emit_log(lvl: u32, v: &str);
+		fn emit_log(lvl: u32, v: &[u8]);
 	}
 	unsafe extern "C++" {
 		include!("nix-eval/src/logging.hh");
