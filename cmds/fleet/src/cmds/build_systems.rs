@@ -106,6 +106,9 @@ impl Deploy {
 			if let Some(destination) = opts.action_attr::<String>(&host, "dest").await? {
 				host.set_session_destination(destination);
 			};
+			if let Some(legacy) = opts.action_attr::<bool>(&host, "legacy_ssh_store").await? {
+				host.set_legacy_ssh_store(legacy);
+			};
 
 			set.spawn_local(
 				(async move {

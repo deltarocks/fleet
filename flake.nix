@@ -168,12 +168,9 @@
                 cargo-fuzz
                 cargo-watch
                 cargo-outdated
-                gdb
 
                 pkg-config
                 openssl
-                bacon
-                nil
                 rustPlatform.bindgenHook
                 inputs'.nix.packages.nix-expr-c
                 inputs'.nix.packages.nix-flake-c

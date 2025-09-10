@@ -13,7 +13,7 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use fleet_shared::SecretData;
 use nix_eval::{Value, nix_go, nix_go_json, util::assert_warn};
-use openssh::SessionBuilder;
+use openssh::{ControlPersist, SessionBuilder};
 use serde::de::DeserializeOwned;
 use tabled::Tabled;
 use tempfile::NamedTempFile;
@@ -99,6 +99,7 @@ pub struct ConfigHost {
 	// TODO: Both of those values are taken from host opts, there should be a cleaner way to specify it
 	deploy_kind: OnceCell<DeployKind>,
 	session_destination: OnceCell<String>,
+	legacy_ssh_store: OnceCell<bool>,
 
 	pub host_config: Option<Value>,
 	pub nixos_config: OnceCell<Value>,
@@ -219,6 +220,11 @@ impl ConfigHost {
 			.set(kind)
 			.expect("deploy kind is already set");
 	}
+	pub fn set_legacy_ssh_store(&self, legacy: bool) {
+		self.legacy_ssh_store
+			.set(legacy)
+			.expect("legacy ssh store is already set")
+	}
 	pub async fn deploy_kind(&self) -> Result<DeployKind> {
 		if let Some(kind) = self.deploy_kind.get() {
 			return Ok(*kind);
@@ -263,7 +269,8 @@ impl ConfigHost {
 		if let Some(session) = &self.session.get() {
 			return Ok((*session).clone());
 		};
-		let session = SessionBuilder::default();
+		let mut session = SessionBuilder::default();
+		session.control_persist(ControlPersist::ClosedAfterInitialConnection);
 
 		let dest = self.session_destination.get().unwrap_or(&self.name);
 		let session = session
@@ -418,9 +425,15 @@ impl ConfigHost {
 		);
 		nix.arg("copy").arg("--substitute-on-destination");
 
+		let proto = if self.legacy_ssh_store.get().cloned().unwrap_or(false) {
+			"ssh"
+		} else {
+			"ssh-ng"
+		};
+
 		match self.deploy_kind().await? {
 			DeployKind::Fleet | DeployKind::UpgradeToFleet | DeployKind::NixosLustrate => {
-				nix.comparg("--to", format!("ssh-ng://{}", self.name));
+				nix.comparg("--to", format!("{proto}://{}", self.name));
 			}
 			DeployKind::NixosInstall => {
 				nix
@@ -428,7 +441,7 @@ impl ConfigHost {
 					.arg("--no-check-sigs")
 					.comparg(
 						"--to",
-						format!("ssh-ng://root@{}?remote-store=/mnt", self.name),
+						format!("{proto}://root@{}?remote-store=/mnt", self.name),
 					);
 			}
 		}
@@ -568,6 +581,7 @@ impl Config {
 			session: OnceLock::new(),
 			deploy_kind: OnceCell::new(),
 			session_destination: OnceCell::new(),
+			legacy_ssh_store: OnceCell::new(),
 		}
 	}
 
@@ -589,6 +603,7 @@ impl Config {
 			session: OnceLock::new(),
 			deploy_kind: OnceCell::new(),
 			session_destination: OnceCell::new(),
+			legacy_ssh_store: OnceCell::new(),
 		})
 	}
 	pub async fn list_hosts(&self) -> Result<Vec<ConfigHost>> {
