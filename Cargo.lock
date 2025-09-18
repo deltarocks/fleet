@@ -2070,8 +2070,6 @@ dependencies = [
  "serde_json",
  "test-log",
  "thiserror 2.0.16",
- "tokio",
- "tokio-util",
  "tracing",
  "tracing-indicatif",
  "vte 0.15.0",

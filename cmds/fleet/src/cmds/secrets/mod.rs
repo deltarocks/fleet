@@ -19,7 +19,7 @@ use nix_eval::{NixType, Value, nix_go, nix_go_json};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
 use tabled::{Table, Tabled};
-use tokio::fs::read;
+use tokio::{fs::read, task::spawn_blocking};
 use tracing::{Instrument, error, info, info_span, warn};
 
 #[derive(Parser)]
@@ -288,7 +288,9 @@ async fn generate_impure(
 
 	let generator = nix_go!(call_package(generator)(Obj {}));
 
-	let generator = generator.build("out").await?;
+	let generator = spawn_blocking(move || generator.build("out"))
+		.await
+		.expect("nix build shouldn't fail")?;
 	let generator = host.remote_derivation(&generator).await?;
 
 	let out_parent = host.mktemp_dir().await?;

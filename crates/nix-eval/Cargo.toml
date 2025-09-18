@@ -11,8 +11,6 @@ nixlike.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true }
-tokio-util.workspace = true
 tracing.workspace = true
 
 cxx = "1.0.168"

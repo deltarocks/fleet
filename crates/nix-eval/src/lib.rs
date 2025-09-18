@@ -750,7 +750,7 @@ impl Value {
 		})?;
 		Ok(out)
 	}
-	pub async fn build(&self, output: &str) -> Result<PathBuf> {
+	pub fn build(&self, output: &str) -> Result<PathBuf> {
 		if !self.is_derivation() {
 			bail!("expected derivation to build")
 		}

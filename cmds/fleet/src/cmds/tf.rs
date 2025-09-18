@@ -10,6 +10,7 @@ use tempfile::NamedTempFile;
 use tokio::{
 	fs::{self, create_dir_all},
 	process::Command,
+	task::spawn_blocking,
 };
 use tracing::debug;
 
@@ -38,7 +39,10 @@ impl Tf {
 			debug!("generating terraform configs");
 			let system = &config.local_system;
 			let config = &config.config_field;
-			let data: PathBuf = nix_go!(config.tf({ system })).build("out").await?;
+			let data = nix_go!(config.tf({ system }));
+			let data: PathBuf = spawn_blocking(move || data.build("out"))
+				.await
+				.expect("tf.json derivation should not fail")?;
 			let data = fs::read(&data).await?;
 
 			create_dir_all(&dir).await?;

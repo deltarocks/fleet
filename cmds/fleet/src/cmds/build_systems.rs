@@ -8,7 +8,7 @@ use fleet_base::{
 	opts::FleetOpts,
 };
 use nix_eval::nix_go;
-use tokio::task::LocalSet;
+use tokio::task::{LocalSet, spawn_blocking};
 use tracing::{Instrument, error, field, info, info_span, warn};
 
 #[derive(Parser)]
@@ -34,7 +34,9 @@ async fn build_task(config: Config, hostname: String, build_attr: &str) -> Resul
 	// let action = Action::from(self.subcommand.clone());
 	let nixos = host.nixos_config().await?;
 	let drv = nix_go!(nixos.system.build[{ build_attr }]);
-	let out_output = drv.build("out").await?;
+	let out_output = spawn_blocking(move || drv.build("out"))
+		.await
+		.expect("system derivation build should not panic")?;
 
 	// We already have system profiles for backups.
 	if !host.local {
