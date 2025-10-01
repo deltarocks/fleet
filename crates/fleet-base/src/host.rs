@@ -34,6 +34,8 @@ pub struct FleetConfigInternals {
 	pub nix_args: Vec<OsString>,
 	/// fleet_config.config
 	pub config_field: Value,
+	/// flake.output
+	pub flake_outputs: Value,
 	// TODO: Remove with connectivity refactor
 	pub localhost: String,
 

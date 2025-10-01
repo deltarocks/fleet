@@ -45,10 +45,10 @@ fleet-base = { version = "0.1.0", path = "../../crates/fleet-base" }
 human-repr = { version = "1.1", optional = true }
 indicatif = { version = "0.18", optional = true }
 nom = "8.0.0"
-tracing-indicatif = { version = "0.3", optional = true }
-tracing-opentelemetry = "0.31.0"
 opentelemetry = "0.30.0"
 opentelemetry_sdk = "0.30.0"
+tracing-indicatif = { version = "0.3", optional = true }
+tracing-opentelemetry = "0.31.0"
 
 [features]
 default = []

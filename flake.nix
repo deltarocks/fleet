@@ -13,6 +13,12 @@
     };
     crane.url = "github:ipetkov/crane";
     shelly.url = "github:CertainLach/shelly";
+    fleet-tf = {
+      url = "github:CertainLach/fleet-tf";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.shelly.follows = "shelly";
+      inputs.flake-parts.follows = "flake-parts";
+    };
     treefmt-nix = {
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -42,7 +48,7 @@
           };
           flakeModule = flakeModules.default;
 
-          fleetModules.tf = ./modules/extras/tf.nix;
+          flakeModules.fleet-tf = ./modules/extras/tf.nix;
 
           # Used to test nix-eval bindings
           testData = {
@@ -114,13 +120,16 @@
           {
             _module.args.pkgs = import inputs.nixpkgs {
               inherit system;
-              overlays = [ (inputs.rust-overlay.overlays.default) (final: prev: {
-                boehmgc = prev.boehmgc.overrideAttrs (prevAttrs: {
-                  configureFlags = prevAttrs.configureFlags ++ [
-                    "--enable-gc-assertions"
-                  ];
-                });
-              }) ];
+              overlays = [
+                (inputs.rust-overlay.overlays.default)
+                (final: prev: {
+                  boehmgc = prev.boehmgc.overrideAttrs (prevAttrs: {
+                    configureFlags = prevAttrs.configureFlags ++ [
+                      "--enable-gc-assertions"
+                    ];
+                  });
+                })
+              ];
             };
             # Reference fleet package should be built with nightly rust, specified in rust-toolchain.toml.
             packages = lib.mkIf deployerSystem (

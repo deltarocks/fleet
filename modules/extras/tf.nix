@@ -11,6 +11,7 @@ let
   inherit (fleetLib.options) mkDataOption;
 in
 {
+
   options = {
     tf = mkOption {
       type = deferredModule;
@@ -18,7 +19,7 @@ in
         module: system:
         inputs.terranix.lib.terranixConfiguration {
           inherit system;
-          pkgs = config.nixpkgs.buildUsing.legacyPackages.${system};
+          pkgs = inputs.nixpkgs.legacyPackages.${system};
           modules = [
             module
           ];
@@ -35,6 +36,8 @@ in
   };
 
   config = {
+    flake.tf = config.tf;
+
     tf.output.fleet = {
       value = {
         managed = true;
@@ -43,6 +46,8 @@ in
       # will be somehow processed by fleet tf.
       sensitive = true;
     };
-    hosts = config.data.extra.terraformHosts;
+    fleetConfigurations.default.hosts = config.data.extra.terraformHosts;
+
+    perSystem.imports = [ ./tf-bootstrap.nix ];
   };
 }

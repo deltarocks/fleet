@@ -38,7 +38,7 @@ impl Tf {
 		{
 			debug!("generating terraform configs");
 			let system = &config.local_system;
-			let config = &config.config_field;
+			let config = &config.flake_outputs;
 			let data = nix_go!(config.tf({ system }));
 			let data: PathBuf = spawn_blocking(move || data.build("out"))
 				.await

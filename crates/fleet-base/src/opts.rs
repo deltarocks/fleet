@@ -267,6 +267,7 @@ impl FleetOpts {
 		Ok(Config(Arc::new(FleetConfigInternals {
 			directory,
 			data,
+			flake_outputs: flake,
 			local_system: self.local_system.clone(),
 			nix_args,
 			config_field,

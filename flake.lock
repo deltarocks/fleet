@@ -71,6 +71,31 @@
         "url": "https://flakehub.com/f/hercules-ci/flake-parts/0.1"
       }
     },
+    "fleet-tf": {
+      "inputs": {
+        "flake-parts": [
+          "flake-parts"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ],
+        "shelly": [
+          "shelly"
+        ]
+      },
+      "locked": {
+        "lastModified": 1759080490,
+        "owner": "CertainLach",
+        "repo": "fleet-tf",
+        "rev": "878bd8c23933d628bf750378bbe527b841901c3d",
+        "type": "github"
+      },
+      "original": {
+        "owner": "CertainLach",
+        "repo": "fleet-tf",
+        "type": "github"
+      }
+    },
     "git-hooks-nix": {
       "inputs": {
         "flake-compat": "flake-compat",
@@ -183,6 +208,7 @@
       "inputs": {
         "crane": "crane",
         "flake-parts": "flake-parts",
+        "fleet-tf": "fleet-tf",
         "nix": "nix",
         "nixpkgs": "nixpkgs_2",
         "rust-overlay": "rust-overlay",

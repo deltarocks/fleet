@@ -9,12 +9,14 @@ struct TracingLogger : Logger {
 
   bool isVerbose() override { return true; }
   void log(Verbosity lvl, std::string_view s) override {
-    rust::Slice<const unsigned char> str(reinterpret_cast<const unsigned char*>(s.data()), s.size());
+    rust::Slice<const unsigned char> str(
+        reinterpret_cast<const unsigned char *>(s.data()), s.size());
     emit_log(lvl, str);
   }
   void logEI(const ErrorInfo &ei) override {
     auto s = ei.msg.str();
-    rust::Slice<const unsigned char> str(reinterpret_cast<const unsigned char*>(s.data()), s.size());
+    rust::Slice<const unsigned char> str(
+        reinterpret_cast<const unsigned char *>(s.data()), s.size());
     emit_log(ei.level, str);
   }
 
@@ -27,7 +29,8 @@ struct TracingLogger : Logger {
         b->add_int_field(f.i);
       } else if (f.type == Logger::Field::tString) {
         auto s = &f.s;
-        rust::Slice<const unsigned char> str(reinterpret_cast<const unsigned char*>(s->data()), s->size());
+        rust::Slice<const unsigned char> str(
+            reinterpret_cast<const unsigned char *>(s->data()), s->size());
         b->add_string_field(str);
       } else {
         unreachable();
@@ -45,7 +48,8 @@ struct TracingLogger : Logger {
         b->add_int_field(f.i);
       } else if (f.type == Logger::Field::tString) {
         auto s = &f.s;
-        rust::Slice<const unsigned char> str(reinterpret_cast<const unsigned char*>(s->data()), s->size());
+        rust::Slice<const unsigned char> str(
+            reinterpret_cast<const unsigned char *>(s->data()), s->size());
         b->add_string_field(str);
       } else {
         unreachable();
