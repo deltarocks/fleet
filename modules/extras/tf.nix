@@ -25,14 +25,6 @@ in
           ];
         };
     };
-    data = mkDataOption {
-      # host => hostData
-      options.extra.terraformHosts = mkOption {
-        default = { };
-        type = attrsOf (attrsOf unspecified);
-        description = "Hosts data provided by fleet tf";
-      };
-    };
   };
 
   config = {
@@ -46,7 +38,17 @@ in
       # will be somehow processed by fleet tf.
       sensitive = true;
     };
-    fleetConfigurations.default.hosts = config.data.extra.terraformHosts;
+    fleetConfigurations.default = {config, ...}: {
+      options.data = mkDataOption {
+        # host => hostData
+        options.extra.terraformHosts = mkOption {
+          default = { };
+          type = attrsOf (attrsOf unspecified);
+          description = "Hosts data provided by fleet tf";
+        };
+      };
+      config.hosts = config.data.extra.terraformHosts;
+    };
 
     perSystem.imports = [ ./tf-bootstrap.nix ];
   };
