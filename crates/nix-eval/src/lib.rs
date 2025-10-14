@@ -2,7 +2,6 @@ use std::alloc::{GlobalAlloc, Layout};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
-use std::mem::forget;
 use std::ptr::null_mut;
 use std::sync::LazyLock;
 use std::{collections::HashMap, path::PathBuf};
@@ -13,30 +12,32 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 pub use anyhow::Result;
-use tracing::{info, instrument};
+use tracing::instrument;
 
 use self::logging::nix_logging_cxx;
 use self::nix_cxx::set_fetcher_setting;
 use self::nix_raw::{
 	BindingsBuilder as c_bindings_builder, EvalState as c_eval_state, GC_SUCCESS,
-	GC_allow_register_threads, GC_free, GC_get_stack_base, GC_init, GC_malloc, GC_realloc,
-	GC_register_my_thread, GC_stack_base, GC_thread_is_registered, GC_unregister_my_thread,
-	Store as c_store, alloc_value, bindings_builder_free, bindings_builder_insert, c_context,
-	c_context_create, c_context_free, clear_err, err_code, err_info_msg, err_msg, eval_state_build,
-	eval_state_builder_load, eval_state_builder_new, eval_state_builder_set_eval_setting,
-	expr_eval_from_string, fetchers_settings, fetchers_settings_free, fetchers_settings_new,
-	flake_lock, flake_lock_flags, flake_lock_flags_free, flake_lock_flags_new, flake_reference,
+	GC_allow_register_threads, GC_get_stack_base, GC_register_my_thread, GC_stack_base,
+	GC_thread_is_registered, GC_unregister_my_thread, ListBuilder as c_list_builder,
+	Store as c_store, StorePath as c_store_path, alloc_value, bindings_builder_free,
+	bindings_builder_insert, c_context, c_context_create, c_context_free, clear_err, err_code,
+	err_info_msg, err_msg, eval_state_build, eval_state_builder_load, eval_state_builder_new,
+	eval_state_builder_set_eval_setting, expr_eval_from_string, fetchers_settings,
+	fetchers_settings_free, fetchers_settings_new, flake_lock, flake_lock_flags,
+	flake_lock_flags_free, flake_lock_flags_new, flake_reference,
 	flake_reference_and_fragment_from_string, flake_reference_parse_flags,
 	flake_reference_parse_flags_free, flake_reference_parse_flags_new,
 	flake_reference_parse_flags_set_base_directory, flake_settings, flake_settings_free,
-	flake_settings_new, get_attr_byname, get_attr_name_byidx, get_attrs_size, get_list_byidx,
-	get_list_size, get_string, get_type, has_attr_byname, init_bool, init_int, init_string,
-	libexpr_init, libstore_init, libutil_init, locked_flake, locked_flake_free,
-	locked_flake_get_output_attrs, make_attrs, make_bindings_builder, realised_string,
-	realised_string_free, realised_string_get_buffer_size, realised_string_get_buffer_start,
+	flake_settings_new, gc_now as gc_now_raw, get_attr_byname, get_attr_name_byidx, get_attrs_size,
+	get_list_byidx, get_list_size, get_string, get_type, has_attr_byname, init_bool, init_int,
+	init_string, libexpr_init, libstore_init, libutil_init, list_builder_free, list_builder_insert,
+	locked_flake, locked_flake_free, locked_flake_get_output_attrs, make_attrs,
+	make_bindings_builder, make_list, make_list_builder, realised_string, realised_string_free,
+	realised_string_get_buffer_size, realised_string_get_buffer_start,
 	realised_string_get_store_path, realised_string_get_store_path_count, set_err_msg, setting_set,
-	state_free, store_open, store_path_name, string_realise, value, value_call, value_decref,
-	value_incref,
+	state_free, store_open, store_parse_path, store_path_free, store_path_name, string_realise,
+	value, value_call, value_decref, value_incref,
 };
 
 // Contains macros helpers
@@ -131,7 +132,7 @@ impl NixErrorKind {
 }
 
 pub fn gc_now() {
-	unsafe { nix_raw::gc_now() };
+	unsafe { gc_now_raw() };
 }
 
 pub fn gc_register_my_thread() {
@@ -399,6 +400,14 @@ unsafe extern "C" fn copy_nix_str(start: *const c_char, n: c_uint, user_data: *m
 struct Store(*mut c_store);
 unsafe impl Send for Store {}
 unsafe impl Sync for Store {}
+
+impl Store {
+	fn parse_path(&self, path: &CStr) -> Result<StorePath> {
+		with_default_context(|c, _| {
+			StorePath(unsafe { store_parse_path(c, self.0, path.as_ptr()) })
+		})
+	}
+}
 
 struct EvalState(*mut c_eval_state);
 unsafe impl Send for EvalState {}
@@ -866,6 +875,15 @@ pub fn init_libraries() {
 	nix_logging_cxx::apply_tracing_logger();
 }
 
+struct StorePath(*mut c_store_path);
+impl StorePath {}
+
+impl Drop for StorePath {
+	fn drop(&mut self) {
+		unsafe { store_path_free(self.0) }
+	}
+}
+
 #[test_log::test]
 fn test_native() -> Result<()> {
 	init_libraries();
@@ -873,7 +891,7 @@ fn test_native() -> Result<()> {
 	let mut fetch_settings = FetchSettings::new();
 	fetch_settings.set(c"warn-dirty", c"false");
 
-	let manifest = format!("{}/../../", env!("CARGO_MANIFEST_DIR"));
+	let manifest = format!("git+file://{}/../../", env!("CARGO_MANIFEST_DIR"));
 	let flake = FlakeSettings::new()?;
 	let parse = FlakeReferenceParseFlags::new(&flake)?;
 	let (mut r, _) = FlakeReference::new(&manifest, &flake, &parse, &fetch_settings)?;
@@ -889,6 +907,14 @@ fn test_native() -> Result<()> {
 
 	let test_string: String = nix_go_json!(test_data.testString);
 	assert_eq!(test_string, "hello");
+
+	let s = nix_go!(attrs.packages["x86_64-linux"].fleet.drvPath);
+	let s = CString::new(s.to_string()?).expect("path str is cstring");
+
+	let nix_ctx = NixContext::new();
+	let store = GLOBAL_STATE.store.parse_path(s.as_c_str())?;
+
+	nix_raw::store_get_fs_closure(1);
 
 	Ok(())
 }
