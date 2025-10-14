@@ -729,29 +729,10 @@ impl Value {
 
 		with_default_context(|c, es| unsafe { get_list_byidx(c, self.0, es, v as u32) }).map(Self)
 	}
-	pub fn attrs_update(self, other: Value) -> Result<Self> {
-		let a_fields = self.list_fields()?;
-		let b_fields = other.list_fields()?;
-		match (a_fields.len(), b_fields.len()) {
-			(_, 0) => return Ok(self),
-			(0, _) => return Ok(other),
-			_ => {}
-		}
-		let mut out = HashMap::new();
-		for f in a_fields.iter() {
-			if b_fields.contains(f) {
-				break;
-			}
-			out.insert(f.as_str(), self.get_field(f)?);
-		}
-		if out.is_empty() {
-			// All fields from lhs are overriden by rhs
-			return Ok(other);
-		}
-		for f in b_fields.iter() {
-			out.insert(f.as_str(), other.get_field(f)?);
-		}
-		Ok(Self::new_attrs(out))
+	pub fn attrs_update(self, other: Value/*, ignore_errors: bool*/) -> Result<Self> {
+		let attrs_update_fn = Self::eval("a: b: a // b")?;
+
+		attrs_update_fn.call(self)?.call(other).context("attrs update")
 	}
 	pub fn get_field(&self, name: impl AsFieldName) -> Result<Self> {
 		if !matches!(self.type_of(), NixType::Attrs) {
