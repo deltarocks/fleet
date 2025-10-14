@@ -520,7 +520,7 @@ impl ConfigHost {
 		let secrets = nix_go!(nixos.secrets);
 		let mut out = Vec::new();
 		for name in secrets.list_fields()? {
-			let secret = secrets.get_field(&name)?;
+			let secret = secrets.get_field(&name).context("getting secret")?;
 			let is_shared: bool = nix_go_json!(secret.shared);
 			if is_shared {
 				continue;

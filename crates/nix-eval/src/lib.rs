@@ -727,7 +727,9 @@ impl Value {
 		let function = match kind {
 			FunctorKind::Function => self.clone(),
 			FunctorKind::Functor => {
-				let f = self.get_field("__functor")?;
+				let f = self
+					.get_field("__functor")
+					.context("getting functor value")?;
 				assert_eq!(
 					f.type_of(),
 					NixType::Function,
@@ -754,9 +756,12 @@ impl Value {
 		if !self.is_derivation() {
 			bail!("expected derivation to build")
 		}
-		let output_name = self.get_field("outputName")?.to_string()?;
+		let output_name = self
+			.get_field("outputName")
+			.context("getting output name field")?
+			.to_string()?;
 		let v = if output_name != output {
-			let out = self.get_field(output)?;
+			let out = self.get_field(output).context("getting target output")?;
 			if !out.is_derivation() {
 				bail!("unknown output: {output}");
 			}

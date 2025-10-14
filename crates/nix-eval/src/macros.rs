@@ -66,20 +66,21 @@ macro_rules! nix_expr {
 
 #[macro_export]
 macro_rules! nix_go {
-	(@o($o:expr) . $var:ident $($tt:tt)*) => {{
-		nix_go!(@o($o.get_field(stringify!($var))?) $($tt)*)
+	(@o($o:expr, $path:expr) . $var:ident $($tt:tt)*) => {{
+		nix_go!(@o($o.get_field(stringify!($var)).context(concat!("getting nested ", $path))?, $path) $($tt)*)
 	}};
-	(@o($o:expr) [ $v:expr ] $($tt:tt)*) => {{
-		nix_go!(@o($o.get_field($v)?) $($tt)*)
+	(@o($o:expr, $path:expr) [ $v:expr ] $($tt:tt)*) => {{
+		nix_go!(@o($o.get_field($v).context(concat!("getting nested ", $path))?, $path) $($tt)*)
 	}};
-	(@o($o:expr) ($($var:tt)*) $($tt:tt)*) => {
-		nix_go!(@o($o.call($crate::nix_expr_inner!($($var)+))?) $($tt)*)
+	(@o($o:expr, $path:expr) ($($var:tt)*) $($tt:tt)*) => {
+		nix_go!(@o($o.call($crate::nix_expr_inner!($($var)+)).context(concat!("getting nested ", $path))?, $path) $($tt)*)
 	};
-	(@o($o:expr)) => {$o};
+	(@o($o:expr, $path:expr)) => {$o};
 	($field:ident $($tt:tt)+) => {{
 		use $crate::nix_go;
+		use ::anyhow::Context;
 		let out = $field.clone();
-		nix_go!(@o(out) $($tt)*)
+		nix_go!(@o(out, ::std::stringify!($($tt)*)) $($tt)*)
 	}}
 }
 #[macro_export]
