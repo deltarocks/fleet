@@ -172,11 +172,6 @@
               factory = craneLib.devShell;
               packages = with pkgs; [
                 rust
-                cargo-edit
-                cargo-udeps
-                cargo-fuzz
-                cargo-watch
-                cargo-outdated
 
                 pkg-config
                 openssl
@@ -184,6 +179,9 @@
                 inputs'.nix.packages.nix-expr-c
                 inputs'.nix.packages.nix-flake-c
                 inputs'.nix.packages.nix-fetchers-c
+                inputs'.nix.packages.nix-store-c
+
+                (rage.overrideAttrs {cargoFeatures = ["plugin"];})
               ];
               environment.PROTOC = "${pkgs.protobuf}/bin/protoc";
             };
