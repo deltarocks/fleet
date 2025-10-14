@@ -1,4 +1,3 @@
-use std::alloc::{GlobalAlloc, Layout};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
@@ -582,6 +581,37 @@ impl Drop for AttrsBuilder {
 	}
 }
 
+struct ListBuilder(*mut c_list_builder, c_uint);
+impl ListBuilder {
+	fn new(capacity: usize) -> Self {
+		with_default_context(|c, es| unsafe { make_list_builder(c, es, capacity) })
+			.map(|l| Self(l, 0))
+			.expect("alloc should not fail")
+	}
+}
+impl ListBuilder {
+	fn push(&mut self, v: Value) {
+		with_default_context(|c, _| unsafe {
+			list_builder_insert(
+				c,
+				self.0,
+				{
+					let v = self.1;
+					self.1 += 1;
+					v
+				},
+				v.0,
+			)
+		})
+		.expect("list insert shouldn't fail");
+	}
+}
+impl Drop for ListBuilder {
+	fn drop(&mut self) {
+		unsafe { list_builder_free(self.0) };
+	}
+}
+
 impl Value {
 	pub fn new_attrs(v: HashMap<&str, Value>) -> Self {
 		let out = Self::new_uninit();
@@ -595,7 +625,15 @@ impl Value {
 		out
 	}
 	fn new_list<T: Into<Self>>(v: Vec<T>) -> Self {
-		todo!()
+		let out = Self::new_uninit();
+		let mut b = ListBuilder::new(v.len());
+		for v in v {
+			b.push(v.into());
+		}
+		with_default_context(|c, _| unsafe { make_list(c, b.0, out.0) })
+			.expect("list initialization should not fail");
+
+		out
 	}
 	fn new_uninit() -> Self {
 		let out = with_default_context(|c, es| unsafe { alloc_value(c, es) })
@@ -914,7 +952,7 @@ fn test_native() -> Result<()> {
 	let nix_ctx = NixContext::new();
 	let store = GLOBAL_STATE.store.parse_path(s.as_c_str())?;
 
-	nix_raw::store_get_fs_closure(1);
+	// nix_raw::store_get_fs_closure(1);
 
 	Ok(())
 }
