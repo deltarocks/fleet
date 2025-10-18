@@ -166,7 +166,7 @@ fn init_secret(identity: &age::ssh::Identity, value: &DataItem) -> Result<()> {
 	for (part_id, part) in value.parts.iter() {
 		let _span = info_span!("part", part_id = part_id);
 		if let Err(e) = init_part(identity, value, part) {
-			error!("failed to init part {part_id}: {e}");
+			error!("failed to init part {part_id:?}: {e}");
 			errored = true;
 		}
 	}
@@ -209,7 +209,7 @@ fn install(data: &Path) -> anyhow::Result<()> {
 	for (name, value) in data {
 		let _span = info_span!("init", name = name);
 		if let Err(e) = init_secret(&identity, &value) {
-			error!("secret failed to initialize: {e}");
+			error!("secret {name:?} failed to initialize: {e}");
 			failed = true;
 		}
 	}
