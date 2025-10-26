@@ -38,17 +38,19 @@ in
       # will be somehow processed by fleet tf.
       sensitive = true;
     };
-    fleetConfigurations.default = {config, ...}: {
-      options.data = mkDataOption {
-        # host => hostData
-        options.extra.terraformHosts = mkOption {
-          default = { };
-          type = attrsOf (attrsOf unspecified);
-          description = "Hosts data provided by fleet tf";
+    fleetConfigurations.default =
+      { config, ... }:
+      {
+        options.data = mkDataOption {
+          # host => hostData
+          options.extra.terraformHosts = mkOption {
+            default = { };
+            type = attrsOf (attrsOf unspecified);
+            description = "Hosts data provided by fleet tf";
+          };
         };
+        config.hosts = config.data.extra.terraformHosts;
       };
-      config.hosts = config.data.extra.terraformHosts;
-    };
 
     perSystem.imports = [ ./tf-bootstrap.nix ];
   };

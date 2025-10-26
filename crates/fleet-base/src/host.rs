@@ -22,7 +22,8 @@ use tracing::warn;
 
 use crate::{
 	command::MyCommand,
-	fleetdata::{FleetData, FleetSecret, FleetSharedSecret},
+	fleetdata::{FleetData, FleetHostSecret, FleetSharedSecret},
+	secret::{HostSecretDefinition, SharedSecretDefinition},
 };
 
 pub struct FleetConfigInternals {
@@ -234,7 +235,7 @@ impl ConfigHost {
 		let is_fleet_managed = match self.file_exists("/etc/FLEET_HOST").await {
 			Ok(v) => v,
 			Err(e) => {
-				bail!("failed to query remote system kind: {}", e);
+				bail!("failed to query remote system kind: {e}");
 			}
 		};
 		if !is_fleet_managed {
@@ -501,7 +502,7 @@ impl ConfigHost {
 
 		Ok(nixos_config)
 	}
-	pub async fn nixos_unchecked_config(&self) -> Result<Value> {
+	pub fn nixos_unchecked_config(&self) -> Result<Value> {
 		if let Some(v) = self.nixos_unchecked_config.get() {
 			return Ok(v.clone());
 		}
@@ -515,23 +516,17 @@ impl ConfigHost {
 		Ok(nixos_config)
 	}
 
-	pub async fn list_configured_secrets(&self) -> Result<Vec<String>> {
-		let nixos = self.nixos_unchecked_config().await?;
+	pub fn list_defined_secrets(&self) -> Result<Vec<String>> {
+		let nixos = self.nixos_unchecked_config()?;
 		let secrets = nix_go!(nixos.secrets);
-		let mut out = Vec::new();
-		for name in secrets.list_fields()? {
-			let secret = secrets.get_field(&name).context("getting secret")?;
-			let is_shared: bool = nix_go_json!(secret.shared);
-			if is_shared {
-				continue;
-			}
-			out.push(name);
-		}
-		Ok(out)
+		secrets.list_fields()
 	}
-	pub async fn secret_field(&self, name: &str) -> Result<Value> {
-		let nixos = self.nixos_unchecked_config().await?;
-		Ok(nix_go!(nixos.secrets[{ name }]))
+	pub fn secret_definition(&self, name: &str) -> Result<HostSecretDefinition> {
+		let nixos = self.nixos_unchecked_config()?;
+		Ok(HostSecretDefinition(
+			self.name.clone(),
+			nix_go!(nixos.secrets[{ name }]),
+		))
 	}
 
 	/// Packages for this host, resolved with nixpkgs overlays
@@ -648,10 +643,19 @@ impl Config {
 
 	pub fn list_secrets(&self, host: &str) -> Vec<String> {
 		let data = self.data();
-		let Some(secrets) = data.host_secrets.get(host) else {
-			return Vec::new();
-		};
-		secrets.keys().cloned().collect()
+		let mut out = data
+			.host_secrets
+			.get(host)
+			.map(|s| s.keys().cloned().collect::<Vec<String>>())
+			.unwrap_or_default();
+
+		for (name, shared) in data.shared_secrets.iter() {
+			if shared.owners.contains(host) {
+				out.push(name.clone());
+			}
+		}
+
+		out
 	}
 
 	pub fn has_secret(&self, host: &str, secret: &str) -> bool {
@@ -661,34 +665,44 @@ impl Config {
 		};
 		host_secrets.contains_key(secret)
 	}
-	pub fn insert_secret(&self, host: &str, secret: String, value: FleetSecret) {
+	pub fn insert_secret(&self, host: &str, secret: String, value: FleetHostSecret) {
 		let mut data = self.data_mut();
 		let host_secrets = data.host_secrets.entry(host.to_owned()).or_default();
 		host_secrets.insert(secret, value);
 	}
+	pub fn remove_secret(&self, host: &str, secret: &str) {
+		let mut data = self.data_mut();
+		let host_secrets = data.host_secrets.entry(host.to_owned()).or_default();
+		host_secrets.remove(secret);
+	}
 
-	pub fn host_secret(&self, host: &str, secret: &str) -> Result<FleetSecret> {
+	pub fn host_secret(&self, host: &str, secret: &str) -> Result<FleetHostSecret> {
 		let data = self.data();
-		let Some(host_secrets) = data.host_secrets.get(host) else {
-			bail!("no secrets for machine {host}");
+		if let Some(host_secrets) = data.host_secrets.get(host) {
+			if let Some(secret) = host_secrets.get(secret) {
+				return Ok(secret.clone());
+			}
 		};
-		let Some(secret) = host_secrets.get(secret) else {
+		let Some(shared) = data.shared_secrets.get(secret) else {
 			bail!("machine {host} has no secret {secret}");
 		};
-		Ok(secret.clone())
-	}
-	pub fn shared_secret(&self, secret: &str) -> Result<FleetSharedSecret> {
-		let data = self.data();
-		let Some(secret) = data.shared_secrets.get(secret) else {
-			bail!("no shared secret {secret}");
+		if !shared.owners.contains(host) {
+			bail!("shared secret {secret} is not owned by {host}");
 		};
-		Ok(secret.clone())
+		Ok(FleetHostSecret {
+			managed: shared.managed,
+			secret: shared.secret.clone(),
+		})
 	}
-	pub async fn shared_secret_expected_owners(&self, secret: &str) -> Result<Vec<String>> {
+	pub fn shared_secret(&self, secret: &str) -> Result<Option<FleetSharedSecret>> {
+		let data = self.data();
+		Ok(data.shared_secrets.get(secret).cloned())
+	}
+	pub fn shared_secret_definition(&self, secret: &str) -> Result<SharedSecretDefinition> {
 		let config_field = &self.config_field;
-		Ok(nix_go_json!(
-			config_field.sharedSecrets[{ secret }].expectedOwners
-		))
+		Ok(SharedSecretDefinition(nix_go!(
+			config_field.sharedSecrets[{ secret }]
+		)))
 	}
 
 	// TODO: Should this be something modifiable from other processes?

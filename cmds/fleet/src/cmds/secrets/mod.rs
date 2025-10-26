@@ -2,17 +2,18 @@ use std::{
 	collections::{BTreeMap, BTreeSet, HashSet},
 	io::{self, Read, Write, stdin, stdout},
 	path::PathBuf,
-	slice,
 };
 
-use age::Recipient;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use chrono::{DateTime, Utc};
 use clap::Parser;
 use fleet_base::{
-	fleetdata::{FleetSecret, FleetSecretPart, FleetSharedSecret, encrypt_secret_data},
+	fleetdata::{
+		FleetHostSecret, FleetSecretData, FleetSecretPart, FleetSharedSecret, encrypt_secret_data,
+	},
 	host::Config,
 	opts::FleetOpts,
+	secret::{Expectations, RegenerationReason, SharedSecretDefinition, secret_needs_regeneration},
 };
 use fleet_shared::SecretData;
 use nix_eval::{NixType, Value, nix_go, nix_go_json};
@@ -146,74 +147,53 @@ pub enum Secret {
 	},
 }
 
-fn secret_needs_regeneration(
-	secret: &FleetSecret,
-	expected_generation_data: &serde_json::Value,
-) -> bool {
-	let data_is_expected = secret.generation_data == *expected_generation_data;
-	// TODO: Leeway?
-	let expired = secret
-		.expires_at
-		.map(|expiration| expiration < Utc::now())
-		.unwrap_or(false);
-	expired || !data_is_expected
-}
-
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip(config, secret, field, prefer_identities))]
+#[tracing::instrument(skip(config, secret, definition, prefer_identities))]
 async fn maybe_regenerate_shared_secret(
 	secret_name: &str,
 	config: &Config,
 	mut secret: FleetSharedSecret,
-	field: Value,
-	expected_owners: &[String],
-	expected_generation_data: serde_json::Value,
+	definition: SharedSecretDefinition,
 	prefer_identities: &[String],
+	expectations: &Expectations,
 ) -> Result<FleetSharedSecret> {
-	let original_set = secret.owners.clone();
+	let reason = secret_needs_regeneration(&secret.secret, &secret.owners, expectations);
+	let value = definition.inner();
 
-	let set = original_set.iter().collect::<BTreeSet<_>>();
-	let expected_set = expected_owners.iter().collect::<BTreeSet<_>>();
-
-	let regeneration_required =
-		secret_needs_regeneration(&secret.secret, &expected_generation_data);
-
-	if set == expected_set && !regeneration_required {
-		info!("no need to update owner list, it is already correct");
-		return Ok(secret);
-	}
-
-	let should_regenerate = if regeneration_required {
-		info!("secret has its generation data changed, regeneration is required");
-		true
-	} else if set.difference(&expected_set).next().is_some() {
-		// TODO: Remove this warning for revokable secrets.
-		warn!(
-			"host was removed from secret owners, but until this host rebuild, the secret will still be stored on it."
-		);
-		nix_go_json!(field.regenerateOnOwnerRemoved)
-	} else if expected_set.difference(&set).next().is_some() {
-		nix_go_json!(field.regenerateOnOwnerAdded)
-	} else {
-		false
+	let (should_reencrypt, reason) = match reason {
+		Some(RegenerationReason::OwnersAdded(_)) => {
+			// Secret always needs to be reencrypted for new owners to be able to read it
+			(
+				true,
+				if nix_go_json!(value.regenerateOnOwnerAdded) {
+					reason
+				} else {
+					None
+				},
+			)
+		}
+		Some(RegenerationReason::OwnersRemoved(_)) => {
+			// No need to reencrypt, we can just leave stanzas in place.
+			if nix_go_json!(value.regenerateOnOwnerRemoved) {
+				(true, reason)
+			} else {
+				(false, None)
+			}
+		}
+		Some(_) => (true, reason),
+		None => (false, None),
 	};
 
-	if should_regenerate {
-		info!("secret needs to be regenerated");
-		let generated = generate_shared(
-			config,
-			secret_name,
-			field,
-			expected_owners.to_vec(),
-			expected_generation_data,
-		)
-		.await?;
+	if let Some(reason) = reason {
+		info!("secret needs to be regenerated: {reason}");
+		let generated = generate_shared(config, secret_name, definition, expectations).await?;
 		Ok(generated)
-	} else {
+	} else if should_reencrypt {
+		info!("secret needs to be reencrypted");
 		let identity_holder = if !prefer_identities.is_empty() {
 			prefer_identities
 				.iter()
-				.find(|i| original_set.iter().any(|s| s == *i))
+				.find(|i| secret.owners.iter().any(|s| s == *i))
 		} else {
 			secret.owners.first()
 		};
@@ -228,12 +208,16 @@ async fn maybe_regenerate_shared_secret(
 			}
 			let host = config.host(identity_holder).await?;
 			let encrypted = host
-				.reencrypt(part.raw.clone(), expected_owners.to_vec())
+				.reencrypt(
+					part.raw.clone(),
+					expectations.owners.iter().cloned().collect(),
+				)
 				.await?;
 			part.raw = encrypted;
 		}
-
-		secret.owners = expected_owners.to_vec();
+		secret.owners = expectations.owners.clone();
+		Ok(secret)
+	} else {
 		Ok(secret)
 	}
 }
@@ -250,8 +234,8 @@ async fn generate_pure(
 	_display_name: &str,
 	_secret: Value,
 	_default_generator: Value,
-	_owners: &[String],
-) -> Result<FleetSecret> {
+	_expectations: &Expectations,
+) -> Result<FleetSecretData> {
 	bail!("pure generators are broken for now")
 }
 async fn generate_impure(
@@ -259,9 +243,8 @@ async fn generate_impure(
 	_display_name: &str,
 	secret: Value,
 	default_generator: Value,
-	expected_owners: &[String],
-	expected_generation_data: serde_json::Value,
-) -> Result<FleetSecret> {
+	expectations: &Expectations,
+) -> Result<FleetSecretData> {
 	let generator = nix_go!(secret.generator);
 	let on: Option<String> = nix_go_json!(default_generator.impureOn);
 
@@ -276,12 +259,11 @@ async fn generate_impure(
 	let mk_secret_generators = nix_go!(on_pkgs.mkSecretGenerators);
 
 	let mut recipients = Vec::new();
-	for owner in expected_owners {
+	for owner in &expectations.owners {
 		let key = config.key(owner).await?;
 		recipients.push(key);
 	}
 	let generators = nix_go!(mk_secret_generators(Obj { recipients }));
-	// FIXME: Apparently, // operator is slow in nix
 	let pkgs_and_generators = on_pkgs.attrs_update(generators)?;
 
 	let call_package = nix_go!(nixpkgs.lib.callPackageWith(pkgs_and_generators));
@@ -331,20 +313,26 @@ async fn generate_impure(
 	let created_at = host.read_file_value(format!("{out}/created_at")).await?;
 	let expires_at = host.read_file_value(format!("{out}/expires_at")).await.ok();
 
-	Ok(FleetSecret {
+	let new_data = FleetSecretData {
 		created_at,
 		expires_at,
 		parts,
-		generation_data: expected_generation_data,
-	})
+		generation_data: expectations.generation_data.clone(),
+	};
+
+	if let Some(reason) = secret_needs_regeneration(&new_data, &expectations.owners, expectations) {
+		bail!("newly generated secret needs to be regenerated: {reason}")
+	}
+
+	Ok(new_data)
 }
+
 async fn generate(
 	config: &Config,
 	display_name: &str,
 	secret: Value,
-	expected_owners: &[String],
-	expected_generation_data: serde_json::Value,
-) -> Result<FleetSecret> {
+	expectations: &Expectations,
+) -> Result<FleetSecretData> {
 	let generator = nix_go!(secret.generator);
 	// Can't properly check on nix module system level
 	{
@@ -388,8 +376,7 @@ async fn generate(
 				display_name,
 				secret,
 				default_generator,
-				expected_owners,
-				expected_generation_data,
+				expectations,
 			)
 			.await
 		}
@@ -399,7 +386,7 @@ async fn generate(
 				display_name,
 				secret,
 				default_generator,
-				expected_owners,
+				expectations,
 			)
 			.await
 		}
@@ -408,21 +395,14 @@ async fn generate(
 async fn generate_shared(
 	config: &Config,
 	display_name: &str,
-	secret: Value,
-	expected_owners: Vec<String>,
-	expected_generation_data: serde_json::Value,
+	secret: SharedSecretDefinition,
+	expectations: &Expectations,
 ) -> Result<FleetSharedSecret> {
 	// let owners: Vec<String> = nix_go_json!(secret.expectedOwners);
 	Ok(FleetSharedSecret {
-		secret: generate(
-			config,
-			display_name,
-			secret,
-			&expected_owners,
-			expected_generation_data,
-		)
-		.await?,
-		owners: expected_owners,
+		managed: Some(true),
+		secret: generate(config, display_name, secret.inner(), expectations).await?,
+		owners: expectations.owners.clone(),
 	})
 }
 
@@ -457,11 +437,11 @@ async fn parse_secret() -> Result<Option<Vec<u8>>> {
 }
 
 fn parse_machines(
-	initial: Vec<String>,
+	initial: BTreeSet<String>,
 	machines: Option<Vec<String>>,
 	mut add_machines: Vec<String>,
 	mut remove_machines: Vec<String>,
-) -> Result<Vec<String>> {
+) -> Result<BTreeSet<String>> {
 	if machines.is_none() && add_machines.is_empty() && remove_machines.is_empty() {
 		bail!("no operation");
 	}
@@ -470,7 +450,6 @@ fn parse_machines(
 	let mut target_machines = initial;
 	info!("Currently encrypted for {initial_machines:?}");
 
-	// ensure!(machines.is_some() || !add_machines.is_empty() || )
 	if let Some(machines) = machines {
 		ensure!(
 			add_machines.is_empty() && remove_machines.is_empty(),
@@ -487,20 +466,13 @@ fn parse_machines(
 	}
 
 	for machine in &remove_machines {
-		let mut removed = false;
-		while let Some(pos) = target_machines.iter().position(|m| m == machine) {
-			target_machines.swap_remove(pos);
-			removed = true;
-		}
-		if !removed {
+		if !target_machines.remove(machine) {
 			warn!("secret is not enabled for {machine}");
 		}
 	}
 	for machine in &add_machines {
-		if target_machines.iter().any(|m| m == machine) {
+		if !target_machines.insert(machine.to_owned()) {
 			warn!("secret is already added to {machine}");
-		} else {
-			target_machines.push(machine.to_owned());
 		}
 	}
 	if !remove_machines.is_empty() {
@@ -527,7 +499,7 @@ impl Secret {
 				}
 			}
 			Secret::AddShared {
-				mut machines,
+				machines,
 				name,
 				force,
 				public,
@@ -537,25 +509,32 @@ impl Secret {
 				re_add,
 				part: part_name,
 			} => {
+				let mut machines: BTreeSet<String> = machines.into_iter().collect();
 				// TODO: Forbid updating secrets with set expectedOwners (= not user-managed).
 
-				let exists = config.has_shared(&name);
-				if exists && !force && !re_add {
-					bail!("secret already defined");
-				}
-				if re_add {
-					// Fixme: use clap to limit this usage
-					ensure!(!force, "--force and --readd are not compatible");
-					ensure!(exists, "secret doesn't exists");
-					ensure!(
-						machines.is_empty(),
-						"you can't use machines argument for --readd"
-					);
-					let shared = config.shared_secret(&name)?;
-					machines = shared.owners;
-				}
+				if let Some(old_shared) = config.shared_secret(&name)? {
+					if !force && !re_add {
+						bail!("secret already defined");
+					};
+					if old_shared.managed.unwrap_or(false) {
+						bail!("secret is marked as managed, should not be updated manually");
+					};
+					if re_add {
+						// Fixme: use clap to limit this usage
+						ensure!(!force, "--force and --readd are not compatible");
+						ensure!(
+							machines.is_empty(),
+							"you can't use machines argument for --readd"
+						);
+						machines = old_shared.owners;
+					}
+				} else if re_add {
+					bail!("secret doesn't exists");
+				};
 
-				let recipients = config.recipients(machines.clone()).await?;
+				let recipients = config
+					.recipients(machines.iter().cloned().collect())
+					.await?;
 
 				let mut parts = BTreeMap::new();
 
@@ -563,9 +542,8 @@ impl Secret {
 				io::stdin().read_to_end(&mut input)?;
 
 				if !input.is_empty() {
-					let encrypted =
-						encrypt_secret_data(recipients.iter().map(|r| r as &dyn Recipient), input)
-							.ok_or_else(|| anyhow!("no recipients provided"))?;
+					let encrypted = encrypt_secret_data(recipients.iter(), input)
+						.ok_or_else(|| anyhow!("no recipients provided"))?;
 					parts.insert(part_name, FleetSecretPart { raw: encrypted });
 				}
 
@@ -576,8 +554,9 @@ impl Secret {
 				config.replace_shared(
 					name,
 					FleetSharedSecret {
+						managed: Some(false),
 						owners: machines,
-						secret: FleetSecret {
+						secret: FleetSecretData {
 							created_at: Utc::now(),
 							expires_at,
 							parts,
@@ -607,34 +586,47 @@ impl Secret {
 						.host_secret(&machine, &name)
 						.context("failed to read existing secret for --merge")?
 				} else {
-					FleetSecret {
-						created_at: Utc::now(),
-						expires_at: None,
-						parts: BTreeMap::new(),
-						generation_data: serde_json::Value::Null,
+					FleetHostSecret {
+						managed: Some(false),
+						secret: FleetSecretData {
+							created_at: Utc::now(),
+							expires_at: None,
+							parts: BTreeMap::new(),
+							generation_data: serde_json::Value::Null,
+						},
 					}
 				};
+				if out.managed.unwrap_or(false) {
+					bail!("secret is managed by fleet and should not be updated manually");
+				}
+				out.managed = Some(false);
 
 				if let Some(secret) = parse_secret().await? {
 					let recipient = config.recipient(&machine).await?;
-					let encrypted = encrypt_secret_data([&recipient as &dyn Recipient], secret)
-						.expect("recipient provided");
+					let encrypted =
+						encrypt_secret_data([&recipient], secret).expect("recipient provided");
 					if out
+						.secret
 						.parts
 						.insert(part_name.clone(), FleetSecretPart { raw: encrypted })
 						.is_some() && !replace
 					{
-						bail!("part {part_name:?} is already defined");
+						bail!(
+							"part {part_name:?} is already defined, use --replace if you wish to replace it"
+						);
 					}
 				}
 
 				if let Some(public) = parse_public(public, public_file).await? {
 					if out
+						.secret
 						.parts
 						.insert(public_name.clone(), FleetSecretPart { raw: public })
 						.is_some() && !replace
 					{
-						bail!("part {public_name:?} is already defined");
+						bail!(
+							"part {public_name:?} is already defined, use --replace if you wish to replace it"
+						);
 					}
 				};
 
@@ -647,7 +639,7 @@ impl Secret {
 				part: part_name,
 			} => {
 				let secret = config.host_secret(&machine, &name)?;
-				let Some(secret) = secret.parts.get(&part_name) else {
+				let Some(secret) = secret.secret.parts.get(&part_name) else {
 					bail!("no part {part_name} in secret {name}");
 				};
 				let data = if secret.raw.encrypted {
@@ -664,7 +656,9 @@ impl Secret {
 				part: part_name,
 				prefer_identities,
 			} => {
-				let secret = config.shared_secret(&name)?;
+				let Some(secret) = config.shared_secret(&name)? else {
+					bail!("secret doesn't exists");
+				};
 				let Some(part) = secret.secret.parts.get(&part_name) else {
 					bail!("no part {part_name} in secret {name}");
 				};
@@ -695,7 +689,9 @@ impl Secret {
 			} => {
 				// TODO: Forbid updating secrets with set expectedOwners (= not user-managed).
 
-				let secret = config.shared_secret(&name)?;
+				let Some(secret) = config.shared_secret(&name)? else {
+					bail!("secret doesn't exists");
+				};
 				if secret.secret.parts.values().all(|v| !v.raw.encrypted) {
 					bail!("no secret");
 				}
@@ -714,20 +710,16 @@ impl Secret {
 					return Ok(());
 				}
 
-				let config_field = &config.config_field;
-				let name_clone = name.clone();
-				let field = nix_go!(config_field.sharedSecrets[name_clone]);
-				let expected_generation_data = nix_go_json!(field.expectedGenerationData);
+				let definition = config.shared_secret_definition(&name)?;
+				let expectations = definition.expectations()?;
 
 				let updated = maybe_regenerate_shared_secret(
 					&name,
 					config,
 					secret,
-					field,
-					&target_machines,
-					expected_generation_data,
+					definition,
 					&prefer_identities,
-					// None,
+					&expectations,
 				)
 				.await?;
 				config.replace_shared(name, updated);
@@ -737,36 +729,26 @@ impl Secret {
 				skip_hosts,
 			} => {
 				info!("checking for secrets to regenerate");
+				let expected_shared_set = config
+					.list_configured_shared()
+					.await?
+					.into_iter()
+					.collect::<HashSet<_>>();
 				let stored_shared_set = config.list_shared().into_iter().collect::<HashSet<_>>();
 				{
 					// Generate missing shared
 					let _span = info_span!("shared").entered();
-					let expected_shared_set = config
-						.list_configured_shared()
-						.await?
-						.into_iter()
-						.collect::<HashSet<_>>();
 					for missing in expected_shared_set.difference(&stored_shared_set) {
-						let config_field = &config.config_field;
-						let secret = nix_go!(config_field.sharedSecrets[{ missing }]);
-						let expected_generation_data: serde_json::Value =
-							nix_go_json!(secret.expectedGenerationData);
-						let expected_owners: Option<Vec<String>> =
-							nix_go_json!(secret.expectedOwners);
-						let Some(expected_owners) = expected_owners else {
-							// Can't generate this missing secret, as it has no defined owners.
+						let definition = config.shared_secret_definition(missing)?;
+						if !definition.is_managed()? {
+							info!("skipping unmanaged secret: {missing}");
 							continue;
-						};
+						}
+						let expectations = definition.expectations()?;
 						info!("generating secret: {missing}");
-						let shared = generate_shared(
-							config,
-							missing,
-							secret,
-							expected_owners,
-							expected_generation_data,
-						)
-						.in_current_span()
-						.await?;
+						let shared = generate_shared(config, missing, definition, &expectations)
+							.in_current_span()
+							.await?;
 						config.replace_shared(missing.to_string(), shared)
 					}
 				}
@@ -778,26 +760,22 @@ impl Secret {
 
 						let _span = info_span!("host", host = host.name).entered();
 						let expected_set = host
-							.list_configured_secrets()
-							.in_current_span()
-							.await?
+							.list_defined_secrets()?
 							.into_iter()
 							.collect::<HashSet<_>>();
 						let stored_set = config
 							.list_secrets(&host.name)
 							.into_iter()
 							.collect::<HashSet<_>>();
-						for missing in expected_set.difference(&stored_set) {
-							info!("generating secret: {missing}");
-							let secret = host.secret_field(missing).in_current_span().await?;
-							let expected_generation_data =
-								nix_go_json!(secret.expectedGenerationData);
+						for missing_secret in expected_set.difference(&stored_set) {
+							info!("generating missing secret: {missing_secret}");
+							let definition = host.secret_definition(missing_secret)?;
+							let expectations = definition.expectations()?;
 							let generated = match generate(
 								config,
-								missing,
-								secret,
-								slice::from_ref(&host.name),
-								expected_generation_data,
+								missing_secret,
+								definition.inner(),
+								&expectations,
 							)
 							.in_current_span()
 							.await
@@ -808,21 +786,27 @@ impl Secret {
 									continue;
 								}
 							};
-							config.insert_secret(&host.name, missing.to_string(), generated)
+							config.insert_secret(
+								&host.name,
+								missing_secret.to_string(),
+								FleetHostSecret {
+									managed: Some(true),
+									secret: generated,
+								},
+							)
 						}
-						for name in stored_set {
-							info!("updating secret: {name}");
-							let data = config.host_secret(&host.name, &name)?;
-							let secret = host.secret_field(&name).in_current_span().await?;
-							let expected_generation_data =
-								nix_go_json!(secret.expectedGenerationData);
-							if secret_needs_regeneration(&data, &expected_generation_data) {
+						for known_secret in stored_set.intersection(&expected_set) {
+							info!("updating secret: {known_secret}");
+							let data = config.host_secret(&host.name, known_secret)?;
+							let definition = host.secret_definition(known_secret)?;
+							let expectations = definition.expectations()?;
+							if let Some(regen_reason) = data.needs_regeneration(&expectations) {
+								info!("needs regeneration: {regen_reason}");
 								let generated = match generate(
 									config,
-									&name,
-									secret,
-									slice::from_ref(&host.name),
-									expected_generation_data,
+									known_secret,
+									definition.inner(),
+									&expectations,
 								)
 								.in_current_span()
 								.await
@@ -833,43 +817,44 @@ impl Secret {
 										continue;
 									}
 								};
-								config.insert_secret(&host.name, name.to_string(), generated)
+								config.insert_secret(
+									&host.name,
+									known_secret.to_string(),
+									FleetHostSecret {
+										managed: Some(true),
+										secret: generated,
+									},
+								)
 							}
+						}
+						for removed_secret in stored_set.difference(&expected_set) {
+							info!("removing secret: {removed_secret}");
+							config.remove_secret(&host.name, removed_secret);
 						}
 					}
 				}
-				let mut to_remove = Vec::new();
-				for name in &stored_shared_set {
-					info!("updating secret: {name}");
-					let data = config.shared_secret(name)?;
-					let config_field = &config.config_field;
-					let expected_owners: Option<Vec<String>> =
-						nix_go_json!(config_field.sharedSecrets[{ name }].expectedOwners);
-					let Some(expected_owners) = expected_owners else {
-						warn!("secret was removed from fleet config: {name}, removing from data");
-						to_remove.push(name.to_string());
-						continue;
-					};
+				for known_secret in stored_shared_set.intersection(&expected_shared_set) {
+					info!("updating shared secret: {known_secret}");
+					let data = config.shared_secret(known_secret)?.expect("exists");
 
-					let secret = nix_go!(config_field.sharedSecrets[{ name }]);
-					let expected_generation_data = nix_go_json!(secret.expectedGenerationData);
+					let definition = config.shared_secret_definition(known_secret)?;
+					let expectations = definition.expectations()?;
 					config.replace_shared(
-						name.to_owned(),
+						known_secret.to_owned(),
 						maybe_regenerate_shared_secret(
-							name,
+							known_secret,
 							config,
 							data,
-							secret,
-							&expected_owners,
-							expected_generation_data,
+							definition,
 							&prefer_identities,
-							// None,
+							&expectations,
 						)
 						.await?,
 					);
 				}
-				for k in to_remove {
-					config.remove_shared(&k);
+				for removed_secret in stored_shared_set.difference(&expected_shared_set) {
+					info!("removing shared secret: {removed_secret}");
+					config.remove_shared(removed_secret);
 				}
 			}
 			Secret::List {} => {
@@ -885,13 +870,14 @@ impl Secret {
 				let mut table = vec![];
 				for name in configured.iter().cloned() {
 					let config = config.clone();
-					let expected_owners = config.shared_secret_expected_owners(&name).await?;
-					let data = config.shared_secret(&name)?;
+					let data = config.shared_secret(&name)?.expect("exists");
+					let definition = config.shared_secret_definition(&name)?;
+					let expectations = definition.expectations()?;
 					let owners = data
 						.owners
 						.iter()
 						.map(|o| {
-							if expected_owners.contains(o) {
+							if expectations.owners.contains(o) {
 								o.green().to_string()
 							} else {
 								o.red().to_string()
@@ -912,7 +898,7 @@ impl Secret {
 				add,
 			} => {
 				let secret = config.host_secret(&machine, &name)?;
-				if let Some(data) = secret.parts.get(&part) {
+				if let Some(data) = secret.secret.parts.get(&part) {
 					let host = config.host(&machine).await?;
 					let secret = host.decrypt(data.raw.clone()).await?;
 					String::from_utf8(secret).context("secret is not utf8")?

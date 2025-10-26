@@ -729,10 +729,13 @@ impl Value {
 
 		with_default_context(|c, es| unsafe { get_list_byidx(c, self.0, es, v as u32) }).map(Self)
 	}
-	pub fn attrs_update(self, other: Value/*, ignore_errors: bool*/) -> Result<Self> {
+	pub fn attrs_update(self, other: Value /*, ignore_errors: bool*/) -> Result<Self> {
 		let attrs_update_fn = Self::eval("a: b: a // b")?;
 
-		attrs_update_fn.call(self)?.call(other).context("attrs update")
+		attrs_update_fn
+			.call(self)?
+			.call(other)
+			.context("attrs update")
 	}
 	pub fn get_field(&self, name: impl AsFieldName) -> Result<Self> {
 		if !matches!(self.type_of(), NixType::Attrs) {
@@ -839,6 +842,9 @@ impl Value {
 	}
 	pub fn is_function(&self) -> bool {
 		self.functor_kind().is_some()
+	}
+	pub fn is_null(&self) -> bool {
+		matches!(self.type_of(), NixType::Null)
 	}
 }
 

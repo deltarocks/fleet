@@ -69,6 +69,16 @@ let
           description = "Contextual metadata embedded within the secret part value";
           default = null;
         };
+        expectedPrivateParts = mkOption {
+          type = listOf str;
+          default = [ ];
+          description = "List of parts that are expected to be encrypted";
+        };
+        expectedPublicParts = mkOption {
+          type = listOf str;
+          default = [ ];
+          description = "List of parts that are expected to be public";
+        };
       };
     };
 in
@@ -81,16 +91,25 @@ in
     };
   };
   config = {
-    hosts = mapAttrs (_: secretMap: {
-      nixos.secrets = mapAttrs (
-        _: s:
-        removeAttrs s [
-          "createdAt"
-          "expiresAt"
-          "generationData"
-        ]
-      ) secretMap;
-    }) config.data.hostSecrets;
+    hosts = mapAttrs (
+      _: secretMap:
+      let
+        partsOf =
+          s:
+          removeAttrs s [
+            "createdAt"
+            "expiresAt"
+            "generationData"
+          ];
+
+      in
+      {
+        nixos.data.secrets = mapAttrs (_: s: partsOf s) secretMap;
+        # nixos.secrets = mapAttrs (
+        #   _: s: mapAttrs (_: _: {}) (partsOf s)
+        # ) secretMap;
+      }
+    ) config.data.hostSecrets;
     nixpkgs.overlays = [
       (final: prev: {
         mkSecretGenerators =

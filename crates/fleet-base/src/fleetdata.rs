@@ -1,5 +1,5 @@
 use std::{
-	collections::BTreeMap,
+	collections::{BTreeMap, BTreeSet},
 	io::{self, Cursor},
 };
 
@@ -12,6 +12,8 @@ use rand::{
 };
 use serde::{Deserialize, Serialize, de::Error};
 use serde_json::Value;
+
+use crate::secret::{Expectations, RegenerationReason, secret_needs_regeneration};
 
 #[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -75,7 +77,7 @@ pub struct FleetData {
 	pub shared_secrets: BTreeMap<String, FleetSharedSecret>,
 	#[serde(default)]
 	#[serde(skip_serializing_if = "BTreeMap::is_empty")]
-	pub host_secrets: BTreeMap<String, BTreeMap<String, FleetSecret>>,
+	pub host_secrets: BTreeMap<String, BTreeMap<String, FleetHostSecret>>,
 
 	// extra_name => anything
 	#[serde(default)]
@@ -83,22 +85,13 @@ pub struct FleetData {
 	pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-#[must_use]
-pub struct FleetSharedSecret {
-	pub owners: Vec<String>,
-	#[serde(flatten)]
-	pub secret: FleetSecret,
-}
-
 /// Returns None if recipients.is_empty()
-pub fn encrypt_secret_data<'a>(
-	recipients: impl IntoIterator<Item = &'a dyn Recipient>,
+pub fn encrypt_secret_data<'r>(
+	recipients: impl IntoIterator<Item = &'r Box<dyn Recipient>>,
 	data: Vec<u8>,
 ) -> Option<SecretData> {
 	let mut encrypted = vec![];
-	let mut encryptor = age::Encryptor::with_recipients(recipients.into_iter())
+	let mut encryptor = age::Encryptor::with_recipients(recipients.into_iter().map(|v| &**v))
 		.ok()?
 		.wrap_output(&mut encrypted)
 		.expect("in memory write");
@@ -118,7 +111,7 @@ pub struct FleetSecretPart {
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 #[must_use]
-pub struct FleetSecret {
+pub struct FleetSecretData {
 	#[serde(default = "Utc::now")]
 	pub created_at: DateTime<Utc>,
 	#[serde(default)]
@@ -131,4 +124,32 @@ pub struct FleetSecret {
 	#[serde(default)]
 	#[serde(skip_serializing_if = "Value::is_null")]
 	pub generation_data: Value,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+#[must_use]
+pub struct FleetHostSecret {
+	#[serde(default)]
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub managed: Option<bool>,
+	#[serde(flatten)]
+	pub secret: FleetSecretData,
+}
+impl FleetHostSecret {
+	pub fn needs_regeneration(&self, expectations: &Expectations) -> Option<RegenerationReason> {
+		secret_needs_regeneration(&self.secret, &expectations.owners, expectations)
+	}
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+#[must_use]
+pub struct FleetSharedSecret {
+	#[serde(default)]
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub managed: Option<bool>,
+	pub owners: BTreeSet<String>,
+	#[serde(flatten)]
+	pub secret: FleetSecretData,
 }

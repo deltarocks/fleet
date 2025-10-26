@@ -151,8 +151,9 @@ in
           toJSON (config.data.sharedSecrets.${name} or { owners = [ ]; }).owners
         }. Run fleet secrets regenerate to fix";
       }) config.sharedSecrets)
+
       ++ (mapAttrsToList (name: secret: {
-        # TODO: Same aassertion should be in host secrets
+        # TODO: Same assertion should be in host secrets
         assertion =
           (config.data.sharedSecrets.${name} or { generationData = null; }).generationData
           == secret.expectedGenerationData;
@@ -160,6 +161,5 @@ in
           toJSON (config.data.sharedSecrets.${name} or { generationData = null; }).generationData
         }. Run fleet secrets regenerate to fix";
       }) config.sharedSecrets);
-    sharedSecrets = mapAttrs (_: _: { }) config.data.sharedSecrets;
   };
 }

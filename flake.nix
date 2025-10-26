@@ -181,7 +181,7 @@
                 inputs'.nix.packages.nix-fetchers-c
                 inputs'.nix.packages.nix-store-c
 
-                (rage.overrideAttrs {cargoFeatures = ["plugin"];})
+                (rage.overrideAttrs { cargoFeatures = [ "plugin" ]; })
               ];
               environment.PROTOC = "${pkgs.protobuf}/bin/protoc";
             };

@@ -24,6 +24,7 @@ serde.workspace = true
 serde_json = "1.0.140"
 tabled = "0.20.0"
 tempfile.workspace = true
+thiserror.workspace = true
 time = { version = "0.3.41", features = ["parsing"] }
 tokio.workspace = true
 tokio-util = "0.7.15"

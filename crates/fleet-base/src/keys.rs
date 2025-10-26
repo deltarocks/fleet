@@ -39,12 +39,14 @@ impl Config {
 		}
 	}
 	/// Insecure, requires root
-	pub async fn recipient(&self, host: &str) -> anyhow::Result<impl Recipient + use<>> {
+	pub async fn recipient(&self, host: &str) -> anyhow::Result<Box<dyn Recipient>> {
 		let key = self.key(host).await?;
-		age::ssh::Recipient::from_str(&key).map_err(|e| anyhow!("parse recipient error: {:?}", e))
+		age::ssh::Recipient::from_str(&key)
+			.map_err(|e| anyhow!("parse recipient error: {e:?}"))
+			.map(|v| Box::new(v) as Box<dyn Recipient>)
 	}
 
-	pub async fn recipients(&self, hosts: Vec<String>) -> Result<Vec<impl Recipient + use<>>> {
+	pub async fn recipients(&self, hosts: Vec<String>) -> Result<Vec<Box<dyn Recipient>>> {
 		let hosts = self.expand_owner_set(hosts).await?;
 		futures::stream::iter(hosts.iter())
 			.then(|m| self.recipient(m.as_ref()))
