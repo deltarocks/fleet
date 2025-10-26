@@ -16,6 +16,7 @@ fn main() {
 	// Link nix C++ libraries for cxx
 	for lib in &[
 		"nix-util",
+		"nix-util-c",
 		"nix-store",
 		"nix-expr",
 		"nix-flake",
@@ -34,12 +35,12 @@ fn main() {
 
 	cxx_build::bridge("src/logging.rs")
 		.file("src/logging.cc")
-		.std("c++20")
+		.std("c++23")
 		.shared_flag(true)
 		.compile("nix-eval-logging");
 	cxx_build::bridge("src/lib.rs")
 		.file("src/lib.cc")
-		.std("c++20")
+		.std("c++23")
 		.shared_flag(true)
 		.compile("nix-eval");
 

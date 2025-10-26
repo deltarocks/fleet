@@ -13,7 +13,7 @@ use serde::de::DeserializeOwned;
 pub use anyhow::Result;
 use tracing::instrument;
 
-use self::logging::nix_logging_cxx;
+use self::logging::{ErrorInfoBuilder, nix_logging_cxx};
 use self::nix_cxx::set_fetcher_setting;
 use self::nix_raw::{
 	BindingsBuilder as c_bindings_builder, EvalState as c_eval_state, GC_SUCCESS,
@@ -179,8 +179,9 @@ impl NixContext {
 		let code = unsafe { err_code(self.0) };
 		NixErrorKind::from_int(code)
 	}
-	fn error<'t>(&self) -> Option<Cow<'t, str>> {
+	fn error<'t>(&self) -> Option<(Cow<'t, str>, Option<Box<ErrorInfoBuilder>>)> {
 		if let NixErrorKind::Generic = self.error_kind()? {
+			let ei = unsafe { logging::nix_logging_cxx::extract_error_info(self.0) };
 			let mut err_out = String::new();
 			unsafe {
 				err_info_msg(
@@ -190,13 +191,13 @@ impl NixContext {
 					(&raw mut err_out).cast(),
 				)
 			};
-			return Some(Cow::Owned(err_out));
+			return Some((Cow::Owned(err_out), Some(ei)));
 		};
 
 		// TODO: Can throw error (resulting in panic) if unable to retrieve error. Should be able to resolve by passing context as a first argument,
 		// but it looks ugly
 		let str = unsafe { err_msg(null_mut(), self.0, null_mut()) };
-		Some(unsafe { CStr::from_ptr(str) }.to_string_lossy())
+		Some((unsafe { CStr::from_ptr(str) }.to_string_lossy(), None))
 	}
 	fn clean_err(&mut self) {
 		unsafe {
@@ -205,8 +206,20 @@ impl NixContext {
 	}
 
 	fn bail_if_error(&self) -> Result<()> {
-		if let Some(err) = self.error() {
-			bail!("{err}");
+		if let Some((err, stack)) = self.error() {
+			let mut e = Err(anyhow!("{err}"));
+			if let Some(stack) = stack {
+				for ele in stack.stack_frames {
+					e = e.with_context(|| {
+						if ele.pos.is_empty() {
+							ele.msg
+						} else {
+							format!("{} at {}", ele.msg, ele.pos)
+						}
+					})
+				}
+			}
+			return e.context("<nix frames>");
 		};
 		Ok(())
 	}

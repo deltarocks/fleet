@@ -1,8 +1,35 @@
-#include "nix-eval/src/logging.rs"
 #include "logging.hh"
 #include <nix/util/logging.hh>
+#include <nix/util/position.hh>
 
 using namespace nix;
+
+rust::Box<ErrorInfoBuilder> copy_error_info(const ErrorInfo &ei) {
+  auto s = ei.msg.str();
+  rust::Slice<const unsigned char> str(
+      reinterpret_cast<const unsigned char *>(s.data()), s.size());
+  auto b = new_error_info(ei.level, str);
+  if (!ei.traces.empty()) {
+    for (auto iter = ei.traces.rbegin(); iter != ei.traces.rend(); ++iter) {
+      auto msg = iter->hint.str();
+
+      rust::Slice<const unsigned char> msgv(
+          reinterpret_cast<const unsigned char *>(msg.data()), msg.size());
+
+      std::ostringstream oss;
+      if (iter->pos) {
+        iter->pos->print(oss, true);
+      }
+      std::string pos = oss.str();
+
+      rust::Slice<const unsigned char> posv(
+          reinterpret_cast<const unsigned char *>(pos.data()), pos.size());
+
+      b->push_stack_frame(msgv, posv);
+    }
+  }
+  return b;
+}
 
 struct TracingLogger : Logger {
   TracingLogger() {}
@@ -14,10 +41,8 @@ struct TracingLogger : Logger {
     emit_log(lvl, str);
   }
   void logEI(const ErrorInfo &ei) override {
-    auto s = ei.msg.str();
-    rust::Slice<const unsigned char> str(
-        reinterpret_cast<const unsigned char *>(s.data()), s.size());
-    emit_log(ei.level, str);
+    auto b = copy_error_info(ei);
+    b->emit_error_info();
   }
 
   void startActivity(ActivityId act, Verbosity lvl, ActivityType type,
@@ -73,5 +98,9 @@ extern "C" {
 void apply_tracing_logger() {
   logger = std::make_unique<TracingLogger>();
   // verbosity = lvlVomit;
+}
+rust::Box<ErrorInfoBuilder>
+extract_error_info(const nix_c_context *read_context) {
+  return copy_error_info(read_context->info.value());
 }
 }

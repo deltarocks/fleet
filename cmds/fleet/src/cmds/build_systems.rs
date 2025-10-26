@@ -118,7 +118,7 @@ impl Deploy {
 					{
 						Ok(path) => path,
 						Err(e) => {
-							error!("failed to build host system closure: {:#}", e);
+							error!("failed to build host system closure: {:?}", e);
 							return;
 						}
 					};

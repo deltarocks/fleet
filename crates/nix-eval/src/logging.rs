@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fmt::Arguments;
 use std::sync::{LazyLock, Mutex};
 
+use cxx::ExternType;
 use tracing::{
 	Level, Span, debug, debug_span, error, error_span, info, info_span, trace, trace_span, warn,
 	warn_span,
@@ -535,6 +536,45 @@ fn ansi_filter(i: &str) -> String {
 	out.output
 }
 
+#[derive(Debug)]
+pub struct StackFrame {
+	pub msg: String,
+	pub pos: String,
+}
+
+#[derive(Debug)]
+pub struct ErrorInfoBuilder {
+	level: Level,
+	msg: String,
+	pub stack_frames: Vec<StackFrame>,
+}
+fn new_error_info(lvl: u32, v: &[u8]) -> Box<ErrorInfoBuilder> {
+	let verbosity = Verbosity::from_int(lvl);
+	let level: Level = verbosity.into();
+	let v = String::from_utf8_lossy(v);
+	Box::new(ErrorInfoBuilder {
+		level,
+		msg: v.to_string(),
+		stack_frames: Vec::new(),
+	})
+}
+impl ErrorInfoBuilder {
+	fn push_stack_frame(&mut self, v: &[u8], pos: &[u8]) {
+		let v = String::from_utf8_lossy(v);
+		let pos = String::from_utf8_lossy(pos);
+		self.stack_frames.push(StackFrame {
+			msg: v.to_string(),
+			pos: pos.to_string(),
+		});
+	}
+	fn emit_error_info(&mut self) {
+		error!("{}", self.msg);
+		for frame in &self.stack_frames {
+			error!("  {} at {}", frame.msg, frame.pos)
+		}
+	}
+}
+
 #[cxx::bridge]
 pub mod nix_logging_cxx {
 	extern "Rust" {
@@ -544,7 +584,14 @@ pub mod nix_logging_cxx {
 		fn add_string_field(&mut self, v: &[u8]);
 		fn emit(&mut self, parent: u64, s: &str);
 		fn emit_result(&mut self, ty: u32);
-
+	}
+	extern "Rust" {
+		type ErrorInfoBuilder;
+		fn new_error_info(lvl: u32, v: &[u8]) -> Box<ErrorInfoBuilder>;
+		fn push_stack_frame(&mut self, v: &[u8], pos: &[u8]);
+		fn emit_error_info(&mut self);
+	}
+	extern "Rust" {
 		fn emit_warn(v: &str);
 		fn emit_stop(id: u64);
 		fn emit_log(lvl: u32, v: &[u8]);
@@ -552,6 +599,15 @@ pub mod nix_logging_cxx {
 	unsafe extern "C++" {
 		include!("nix-eval/src/logging.hh");
 
+		type nix_c_context = crate::nix_raw::c_context;
+
 		fn apply_tracing_logger();
+		unsafe fn extract_error_info(ctx: *const nix_c_context) -> Box<ErrorInfoBuilder>;
 	}
+}
+
+unsafe impl ExternType for crate::nix_raw::c_context {
+	type Id = cxx::type_id!("nix_c_context");
+
+	type Kind = cxx::kind::Opaque;
 }
