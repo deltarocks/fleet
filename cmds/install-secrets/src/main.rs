@@ -58,7 +58,6 @@ struct DataItem {
 	owner: String,
 	root_path: Option<PathBuf>,
 
-	#[serde(flatten)]
 	parts: BTreeMap<String, Part>,
 }
 

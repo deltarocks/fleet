@@ -6,12 +6,18 @@
   ...
 }:
 let
-  inherit (builtins) hashString elemAt length toJSON filter;
+  inherit (builtins)
+    hashString
+    elemAt
+    length
+    toJSON
+    filter
+    ;
   inherit (lib.stringsWithDeps) stringAfter;
   inherit (lib.options) mkOption literalExpression;
   inherit (lib.lists) optional;
   inherit (lib.attrsets) mapAttrs mapAttrsToList;
-  inherit (lib.modules) mkIf;
+  inherit (lib.modules) mkIf mkMerge;
   inherit (lib.types)
     submodule
     str
@@ -23,6 +29,7 @@ let
     functionTo
     package
     listOf
+    bool
     ;
   inherit (fleetLib.strings) decodeRawSecret;
 
@@ -54,6 +61,11 @@ let
       in
       {
         options = {
+          encrypted = mkOption {
+            type = bool;
+            description = "Is this secret part supposed to be encrypted?";
+          };
+
           hash = mkOption {
             type = str;
             description = "Hash of secret in encoded format";
@@ -86,28 +98,18 @@ let
   secretType = submodule (
     {
       config,
-      loc,
-      options,
       ...
     }:
     let
-      secretName =
-        # Due to config definition for freeformType, we can't just use _module.args due to infinite recursion, instead
-        # extract the secret name the ugly way...
-        let
-          saLoc = options._module.specialArgs.loc;
-          comp = elemAt saLoc;
-        in
-        assert
-          (length saLoc == 2 ||
-          length saLoc == 4 &&
-          comp 0 == "secrets" && comp 2 == "_module" && comp 3 == "specialArgs") ||
-          throw "Unexpected module structure ${toJSON saLoc}";
-        if length saLoc == 2 then "documentation generator stub" else comp 1;
+      secretName = config._module.args.name;
     in
     {
-      freeformType = lazyAttrsOf (secretPartType secretName);
       options = {
+        parts = mkOption {
+          type = lazyAttrsOf (secretPartType secretName);
+          description = "Definition of secret parts";
+          default = {};
+        };
         generator = mkOption {
           type = uniq (nullOr (functionTo package));
           description = "Derivation to evaluate for secret generation";
@@ -134,18 +136,11 @@ let
           description = "Data that gets embedded into secret part";
           default = null;
         };
-        expectedPrivateParts = mkOption {
-          type = listOf str;
-          default = [ ];
-          description = "List of parts that are expected to be encrypted";
-        };
-        expectedPublicParts = mkOption {
-          type = listOf str;
-          default = [ ];
-          description = "List of parts that are expected to be public";
-        };
       };
-      config = mapAttrs (_: _: { }) (removeAttrs (sysConfig.data.secrets.${secretName} or {}) [ "shared" ]);
+      config.parts = mkMerge [
+        (mkIf (config.generator != null && config.generator ? parts) config.generator.parts)
+        (mapAttrs (_: _: {}) (removeAttrs sysConfig.data.secrets.${secretName} ["shared"]))
+      ];
     }
   );
   processPart = secretName: partName: part: {
@@ -155,20 +150,11 @@ let
   processSecret =
     secretName: secret:
     {
-      inherit (secret) group mode owner;
-    }
-    // (mapAttrs (processPart secretName) (
-      removeAttrs secret [
-        "shared"
-        "generator"
-        "mode"
-        "group"
-        "owner"
-        "expectedGenerationData"
-        "expectedPrivateParts"
-        "expectedPublicParts"
-      ]
-    ));
+      inherit (secret.definition) group mode owner;
+      parts = (mapAttrs (processPart secretName) (
+        secret.definition.parts
+      ));
+    };
   secretsData = (mapAttrs (processSecret) config.secrets);
   secretsFile = pkgs.writeTextFile {
     name = "secrets.json";
@@ -188,29 +174,18 @@ in
     secrets = mkOption {
       type = attrsOf secretType;
       default = { };
+      apply = v: (mapAttrs (_: secret: secret.parts // {definition = secret;}) v);
       description = "Host-local secrets";
     };
     system.secretsData = mkOption {
       type = unspecified;
-      default = {};
+      default = { };
       description = "secrets.json contents";
     };
   };
   config = {
-    system = {inherit secretsData;};
+    system = { inherit secretsData; };
     environment.systemPackages = [ pkgs.fleet-install-secrets ];
-
-    warnings = filter (v: v!=null) (mapAttrsToList (
-      name: secret:
-      if
-        secret.expectedPrivateParts == [ ]
-        && secret.expectedPublicParts == [ ]
-        && !(config.data.secrets.${name} or { shared = false; }).shared
-      then
-        "Secret ${name} has no expected parts defined, this is deprecated for better visibility"
-      else
-        null
-    ) config.secrets);
 
     systemd.services.fleet-install-secrets = mkIf useSysusers {
       wantedBy = [ "sysinit.target" ];

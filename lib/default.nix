@@ -54,170 +54,214 @@ rec {
 
   inherit (modules) mkFleetDefault mkFleetGeneratorDefault;
 
-  secrets = {
-    /**
-      Generate a random secret password, 32 ascii characters by default
+  secrets =
+    let
+      describedGenerator =
+        generator: {parts ? {}}:
+        {parts = {};}
+        // {
+          __functor = generator;
+        };
+    in
+    {
+      inherit describedGenerator;
 
-      Options:
-        size: generated password length in ascii characters (bytes).
-        noSymbols: by default, character set includes various special characters ($ , ! + * : ~), and might
-                   not be accepted in some contexts, this option switches charset to just [A-Za-z0-9].
+      /**
+        Generate a random secret password, 32 ascii characters by default
 
-      Output:
-        Resulting secret has only part: secret, which contains encrypted password.
-    */
-    mkPassword =
-      {
-        size ? 32,
-      }:
-      {
-        coreutils,
-        mkSecretGenerator,
-      }:
-      mkSecretGenerator {
-        script = ''
-          mkdir $out
-          gh generate password -o $out/secret --size ${toString size}
-        '';
-      };
+        Options:
+          size: generated password length in ascii characters (bytes).
+          noSymbols: by default, character set includes various special characters ($ , ! + * : ~), and might
+                     not be accepted in some contexts, this option switches charset to just [A-Za-z0-9].
 
-    /**
-      Generate a random ed25519 keypair
+        Output:
+          Resulting secret has only part: secret, which contains encrypted password.
+      */
+      mkPassword =
+        {
+          size ? 32,
+        }:
+        describedGenerator
+          (
+            {
+              coreutils,
+              mkSecretGenerator,
+            }:
+            mkSecretGenerator {
+              script = ''
+                mkdir $out
+                gh generate password -o $out/secret --size ${toString size}
+              '';
+            }
+          )
+          {
+            parts.secret.encrypted = true;
+          };
 
-      Options:
-        noEmbedPublic: By default, secret key also embeds public key in itself ("extended" format, 64 bytes)
-                       When noEmbedPublis is enabled - only the private scalar is included.
-        encoding: Encoring of public and secret parts, can be "raw" (default), "base64" or "hex".
+      /**
+        Generate a random ed25519 keypair
 
-      Output:
-        Resulting secret has two parts: public and secret, where the secret part is encrypted.
+        Options:
+          noEmbedPublic: By default, secret key also embeds public key in itself ("extended" format, 64 bytes)
+                         When noEmbedPublis is enabled - only the private scalar is included.
+          encoding: Encoring of public and secret parts, can be "raw" (default), "base64" or "hex".
 
-      This secret format is used by e.g Garage S3 server
-    */
-    mkEd25519 =
-      {
-        noEmbedPublic ? false,
-        encoding ? null,
-      }:
-      { mkSecretGenerator }:
-      mkSecretGenerator {
-        script = ''
-          mkdir $out
-          gh generate ed25519 -p $out/public -s $out/secret \
-            ${optionalString noEmbedPublic "--no-embed-public"} \
-            ${optionalString (encoding != null) "--encoding=${encoding}"}
-        '';
-      };
+        Output:
+          Resulting secret has two parts: public and secret, where the secret part is encrypted.
 
-    /**
-      Generate a random x25519 keypair
+        This secret format is used by e.g Garage S3 server
+      */
+      mkEd25519 =
+        {
+          noEmbedPublic ? false,
+          encoding ? null,
+        }:
+        describedGenerator
+          (
+            { mkSecretGenerator }:
+            mkSecretGenerator {
+              script = ''
+                mkdir $out
+                gh generate ed25519 -p $out/public -s $out/secret \
+                  ${optionalString noEmbedPublic "--no-embed-public"} \
+                  ${optionalString (encoding != null) "--encoding=${encoding}"}
+              '';
+            }
+          )
+          {
+            parts.secret.encrypted = true;
+            parts.public.encrypted = false;
+          };
 
-      Options:
-        encoding: Encoring of public and secret parts, can be "raw" (default), "base64" or "hex".
+      /**
+        Generate a random x25519 keypair
 
-      Output:
-        Resulting secret has two parts: public and secret, where the secret part is encrypted.
+        Options:
+          encoding: Encoring of public and secret parts, can be "raw" (default), "base64" or "hex".
 
-      This secret format is used by e.g Wireguard VPN for peers (base64-encoded)
-    */
-    mkX25519 =
-      {
-        encoding ? null,
-      }:
-      { mkSecretGenerator }:
-      mkSecretGenerator {
-        script = ''
-          mkdir $out
-          gh generate x25519 -p $out/public -s $out/secret \
-            ${optionalString (encoding != null) "--encoding=${encoding}"}
-        '';
-      };
+        Output:
+          Resulting secret has two parts: public and secret, where the secret part is encrypted.
 
-    /**
-      Generate a random RSA keypair
+        This secret format is used by e.g Wireguard VPN for peers (base64-encoded)
+      */
+      mkX25519 =
+        {
+          encoding ? null,
+        }:
+        describedGenerator
+          (
+            { mkSecretGenerator }:
+            mkSecretGenerator {
+              script = ''
+                mkdir $out
+                gh generate x25519 -p $out/public -s $out/secret \
+                  ${optionalString (encoding != null) "--encoding=${encoding}"}
+              '';
+            }
+          )
+          {
+            parts.secret.encrypted = true;
+            parts.public.encrypted = false;
+          };
 
-      Options:
-        size: RSA key size, 4096 by default
+      /**
+        Generate a random RSA keypair
 
-      Output:
-        Resulting secret has two parts: public and secret, where the secret part is encrypted.
-        Both parts are PEM encoded.
-    */
-    mkRsa =
-      {
-        size ? 4096,
-      }:
-      {
-        openssl,
-        mkSecretGenerator,
-      }:
-      mkSecretGenerator {
-        script = ''
-          mkdir $out
+        Options:
+          size: RSA key size, 4096 by default
 
-          ${openssl}/bin/openssl genrsa -out rsa_private.key ${toString size}
-          ${openssl}/bin/openssl rsa -in rsa_private.key -pubout -out rsa_public.key
+        Output:
+          Resulting secret has two parts: public and secret, where the secret part is encrypted.
+          Both parts are PEM encoded.
+      */
+      mkRsa =
+        {
+          size ? 4096,
+        }:
+        describedGenerator
+          (
+            {
+              openssl,
+              mkSecretGenerator,
+            }:
+            mkSecretGenerator {
+              script = ''
+                mkdir $out
 
-          cat rsa_private.key | gh private -o $out/secret
-          cat rsa_public.key | gh public -o $out/public
-        '';
-      };
+                ${openssl}/bin/openssl genrsa -out rsa_private.key ${toString size}
+                ${openssl}/bin/openssl rsa -in rsa_private.key -pubout -out rsa_public.key
 
-    /**
-      Generate a random byte sequence
+                cat rsa_private.key | gh private -o $out/secret
+                cat rsa_public.key | gh public -o $out/public
+              '';
+            }
+          )
+          {
+            parts.secret.encrypted = true;
+            parts.public.encrypted = false;
+          };
 
-      Options:
-        size: generated password length in bytes, 32 by default.
-        encoding: how the generated bytes should be encoded, "raw" (default), "hex" or "base64"
-        noNuls: prevent output byte sequence from containing internal \0, useful for some C applications
-                that can't handle their strings properly.
+      /**
+        Generate a random byte sequence
 
-      Output:
-        Resulting secret has only part: secret, which contains encrypted bytes.
+        Options:
+          size: generated password length in bytes, 32 by default.
+          encoding: how the generated bytes should be encoded, "raw" (default), "hex" or "base64"
+          noNuls: prevent output byte sequence from containing internal \0, useful for some C applications
+                  that can't handle their strings properly.
 
-      Might be used for e.g. Wireguard VPN PSK keys (base64-encoded)
-    */
-    mkBytes =
-      {
-        count ? 32,
-        encoding,
-        noNuls ? false,
-      }:
-      { mkSecretGenerator }:
-      mkSecretGenerator {
-        script = ''
-          mkdir $out
-          gh generate bytes --count=${toString count} --encoding=${encoding} -o $out/secret \
-            ${optionalString noNuls "--no-nuls"}
-        '';
-      };
-    /**
-      Shorthand for `mkBytes`, which defaults to "hex" encoding
-    */
-    mkHexBytes =
-      {
-        count ? 32,
-      }:
-      mkBytes {
-        inherit count;
-        encoding = "hex";
-      };
-    /**
-      Shorthand for `mkBytes`, which defaults to "base64" encoding
-    */
-    mkBase64Bytes =
-      {
-        count ? 32,
-      }:
-      mkBytes {
-        inherit count;
-        encoding = "base64";
-      };
+        Output:
+          Resulting secret has only part: secret, which contains encrypted bytes.
 
-    # Wireguard
-    # mkWireguard = {}: mkX25519 {encoding = "base64";};
-    # mkWireguardPsk = {}: mkBase64Bytes {count = 32;};
-  };
+        Might be used for e.g. Wireguard VPN PSK keys (base64-encoded)
+      */
+      mkBytes =
+        {
+          count ? 32,
+          encoding,
+          noNuls ? false,
+        }:
+        describedGenerator
+          (
+            { mkSecretGenerator }:
+            mkSecretGenerator {
+              script = ''
+                mkdir $out
+                gh generate bytes --count=${toString count} --encoding=${encoding} -o $out/secret \
+                  ${optionalString noNuls "--no-nuls"}
+              '';
+            }
+          )
+          {
+            parts.secret.encrypted = true;
+          };
+      /**
+        Shorthand for `mkBytes`, which defaults to "hex" encoding
+      */
+      mkHexBytes =
+        {
+          count ? 32,
+        }:
+        mkBytes {
+          inherit count;
+          encoding = "hex";
+        };
+      /**
+        Shorthand for `mkBytes`, which defaults to "base64" encoding
+      */
+      mkBase64Bytes =
+        {
+          count ? 32,
+        }:
+        mkBytes {
+          inherit count;
+          encoding = "base64";
+        };
+
+      # Wireguard
+      # mkWireguard = {}: mkX25519 {encoding = "base64";};
+      # mkWireguardPsk = {}: mkBase64Bytes {count = 32;};
+    };
 
   inherit (secrets)
     mkPassword
