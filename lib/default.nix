@@ -1,7 +1,7 @@
 # Shared functions for fleet configuration, available as `fleet` module argument
 { lib }:
 let
-  inherit (lib.trivial) isFunction;
+  inherit (lib.trivial) isFunction functionArgs;
   inherit (lib.options) mkOption mergeOneOption;
   inherit (lib.modules) mkOverride;
   inherit (lib.types)
@@ -60,7 +60,8 @@ rec {
         generator: {parts ? {}}:
         {parts = {};}
         // {
-          __functor = generator;
+          __functionArgs = functionArgs generator;
+          __functor = _: generator;
         };
     in
     {
