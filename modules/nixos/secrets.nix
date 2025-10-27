@@ -139,7 +139,7 @@ let
       };
       config.parts = mkMerge [
         (mkIf (config.generator != null && config.generator ? parts) config.generator.parts)
-        (mapAttrs (_: _: {}) (removeAttrs sysConfig.data.secrets.${secretName} ["shared"]))
+        (mapAttrs (_: _: {}) (removeAttrs sysConfig.data.secrets.${secretName} ["shared" "managed"]))
       ];
     }
   );
