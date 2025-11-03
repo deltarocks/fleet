@@ -115,8 +115,7 @@ let
   };
 in
 {
-  options.data = mkDataOption (
-    { config, ... }:
+  options.data = mkDataOption ({ config, ... }:
     {
       options = {
         managerKeys = mkOption {
@@ -143,8 +142,7 @@ in
           toHostSecret = _: secret: (removeAttrs secret [ "owners" ]) // { shared = true; };
         in
         genAttrs hostsWithSharedSecrets (host: mapAttrs toHostSecret (secretsHavingHost host));
-    }
-  );
+    });
   config = {
     assertions =
       (mapAttrsToList (name: secret: {

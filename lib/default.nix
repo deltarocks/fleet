@@ -17,7 +17,10 @@ rec {
     overlay = mkOptionType {
       name = "nixpkgs-overlay";
       description = "nixpkgs overlay";
-      check = isFunction;
+      check = {
+        __functor = _self: isFunction;
+        isV2MergeCoherent = true;
+      };
       merge = mergeOneOption;
     };
     listOfOverlay = listOf types.overlay;
