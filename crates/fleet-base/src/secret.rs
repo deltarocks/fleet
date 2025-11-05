@@ -17,20 +17,37 @@ pub struct Expectations {
 pub struct HostSecretDefinition(pub(crate) String, pub(crate) Value);
 impl HostSecretDefinition {
 	pub fn is_managed(&self) -> Result<bool> {
-		let value = &self.1;
-		Ok(!nix_go!(value.generator).is_null())
+		let def = self.definition_value()?;
+		Ok(!nix_go!(def.generator).is_null())
+	}
+	pub fn is_shared(&self) -> Result<bool> {
+		let def = self.definition_value()?;
+		Ok(nix_go_json!(def.shared))
 	}
 	pub fn expectations(&self) -> Result<Expectations> {
-		let value = &self.1;
+		let def = self.definition_value()?;
+		let parts = nix_go!(def.parts);
+
+		let mut public_parts = BTreeSet::new();
+		let mut private_parts = BTreeSet::new();
+		for part in parts.list_fields()? {
+			if nix_go_json!(parts[&part].encrypted) {
+				private_parts.insert(part.clone());
+			} else {
+				public_parts.insert(part.clone());
+			}
+		}
+
 		Ok(Expectations {
 			owners: BTreeSet::from([self.0.clone()]),
-			generation_data: nix_go_json!(value.expectedGenerationData),
-			public_parts: nix_go_json!(value.expectedPublicParts),
-			private_parts: nix_go_json!(value.expectedPrivateParts),
+			generation_data: nix_go_json!(def.expectedGenerationData),
+			public_parts,
+			private_parts,
 		})
 	}
-	pub fn inner(&self) -> Value {
-		self.1.clone()
+	pub fn definition_value(&self) -> Result<Value> {
+		let value = &self.1;
+		Ok(nix_go!(value.definition))
 	}
 }
 
@@ -49,7 +66,7 @@ impl SharedSecretDefinition {
 			private_parts: nix_go_json!(value.expectedPrivateParts),
 		})
 	}
-	pub fn inner(&self) -> Value {
+	pub fn definition_value(&self) -> Value {
 		self.0.clone()
 	}
 }

@@ -158,7 +158,7 @@ async fn maybe_regenerate_shared_secret(
 	expectations: &Expectations,
 ) -> Result<FleetSharedSecret> {
 	let reason = secret_needs_regeneration(&secret.secret, &secret.owners, expectations);
-	let value = definition.inner();
+	let value = definition.definition_value();
 
 	let (should_reencrypt, reason) = match reason {
 		Some(RegenerationReason::OwnersAdded(_)) => {
@@ -401,7 +401,13 @@ async fn generate_shared(
 	// let owners: Vec<String> = nix_go_json!(secret.expectedOwners);
 	Ok(FleetSharedSecret {
 		managed: Some(true),
-		secret: generate(config, display_name, secret.inner(), expectations).await?,
+		secret: generate(
+			config,
+			display_name,
+			secret.definition_value(),
+			expectations,
+		)
+		.await?,
 		owners: expectations.owners.clone(),
 	})
 }
@@ -711,7 +717,9 @@ impl Secret {
 				}
 
 				let definition = config.shared_secret_definition(&name)?;
-				let expectations = definition.expectations()?;
+				let expectations = definition
+					.expectations()
+					.with_context(|| format!("expectations for shared {name:?}"))?;
 
 				let updated = maybe_regenerate_shared_secret(
 					&name,
@@ -744,7 +752,9 @@ impl Secret {
 							info!("skipping unmanaged secret: {missing}");
 							continue;
 						}
-						let expectations = definition.expectations()?;
+						let expectations = definition
+							.expectations()
+							.with_context(|| format!("expectations for shared {missing:?}"))?;
 						info!("generating secret: {missing}");
 						let shared = generate_shared(config, missing, definition, &expectations)
 							.in_current_span()
@@ -768,13 +778,18 @@ impl Secret {
 							.into_iter()
 							.collect::<HashSet<_>>();
 						for missing_secret in expected_set.difference(&stored_set) {
+							let secret = host.secret_definition(missing_secret)?;
+							if secret.is_shared()? {
+								continue;
+							}
 							info!("generating missing secret: {missing_secret}");
-							let definition = host.secret_definition(missing_secret)?;
-							let expectations = definition.expectations()?;
+							let expectations = secret.expectations().with_context(|| {
+								format!("expectations for {missing_secret:?} of {:?}", host.name)
+							})?;
 							let generated = match generate(
 								config,
 								missing_secret,
-								definition.inner(),
+								secret.definition_value()?,
 								&expectations,
 							)
 							.in_current_span()
@@ -796,16 +811,19 @@ impl Secret {
 							)
 						}
 						for known_secret in stored_set.intersection(&expected_set) {
+							let secret = host.secret_definition(known_secret)?;
+							if secret.is_shared()? {
+								continue;
+							}
 							info!("updating secret: {known_secret}");
 							let data = config.host_secret(&host.name, known_secret)?;
-							let definition = host.secret_definition(known_secret)?;
-							let expectations = definition.expectations()?;
+							let expectations = secret.expectations()?;
 							if let Some(regen_reason) = data.needs_regeneration(&expectations) {
 								info!("needs regeneration: {regen_reason}");
 								let generated = match generate(
 									config,
 									known_secret,
-									definition.inner(),
+									secret.definition_value()?,
 									&expectations,
 								)
 								.in_current_span()
@@ -828,6 +846,10 @@ impl Secret {
 							}
 						}
 						for removed_secret in stored_set.difference(&expected_set) {
+							let definition = host.secret_definition(removed_secret)?;
+							if definition.is_shared()? {
+								continue;
+							}
 							info!("removing secret: {removed_secret}");
 							config.remove_secret(&host.name, removed_secret);
 						}

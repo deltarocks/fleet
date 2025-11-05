@@ -124,6 +124,7 @@ in
                 # If set - script will be run on remote machine, otherwise it will be run with fleet project in CWD
                 # (Some secrets-encryption-in-git/managed PKI solution is expected)
                 impureOn ? null,
+                parts,
               }:
               (prev.writeShellScript "impureGenerator.sh" ''
                 #!/bin/sh
@@ -151,12 +152,12 @@ in
               '').overrideAttrs
                 (old: {
                   passthru = {
-                    inherit impureOn;
+                    inherit impureOn parts;
                     generatorKind = "impure";
                   };
                 });
             # Pure generators are disabled for now
-            mkSecretGenerator = { script }: mkImpureSecretGenerator { inherit script; };
+            mkSecretGenerator = { script, parts }: mkImpureSecretGenerator { inherit script parts; };
 
             # TODO: Implement consistent naming
             # Pure secret generator is supposed to be run entirely by nix, using `__impure` derivation type...

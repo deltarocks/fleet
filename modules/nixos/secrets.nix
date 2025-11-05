@@ -105,10 +105,14 @@ let
     in
     {
       options = {
+        shared = mkOption {
+          type = bool;
+          description = "Was this secret propagated from a shared secret?";
+        };
         parts = mkOption {
           type = lazyAttrsOf (secretPartType secretName);
           description = "Definition of secret parts";
-          default = {};
+          default = { };
         };
         generator = mkOption {
           type = uniq (nullOr (functionTo package));
@@ -137,24 +141,39 @@ let
           default = null;
         };
       };
-      config.parts = mkMerge [
-        (mkIf (config.generator != null && config.generator ? parts) config.generator.parts)
-        (mapAttrs (_: _: {}) (removeAttrs (sysConfig.data.secrets.${secretName} or {}) ["shared" "managed"]))
-      ];
+      config = {
+        shared = (sysConfig.data.secrets.${secretName} or { shared = false; }).shared;
+        parts = mkMerge [
+          (mkIf (config.generator != null)
+            (
+              # Get fake derivation body, in future it should be implemented the same way as in Rust.
+              lib.callPackageWith (
+                pkgs
+                // {
+                  mkSecretGenerator = pkgs.stdenv.mkDerivation;
+                  mkImpureSecretGenerator = pkgs.stdenv.mkDerivation;
+                }
+              ) config.generator { }
+            ).parts
+          )
+          (mapAttrs (_: _: { }) (
+            removeAttrs (sysConfig.data.secrets.${secretName} or { }) [
+              "shared"
+              "managed"
+            ]
+          ))
+        ];
+      };
     }
   );
   processPart = secretName: partName: part: {
     inherit (part) path stablePath;
     raw = config.data.secrets.${secretName}.${partName}.raw;
   };
-  processSecret =
-    secretName: secret:
-    {
-      inherit (secret.definition) group mode owner;
-      parts = (mapAttrs (processPart secretName) (
-        secret.definition.parts
-      ));
-    };
+  processSecret = secretName: secret: {
+    inherit (secret.definition) group mode owner;
+    parts = (mapAttrs (processPart secretName) (secret.definition.parts));
+  };
   secretsData = (mapAttrs (processSecret) config.secrets);
   secretsFile = pkgs.writeTextFile {
     name = "secrets.json";
@@ -174,7 +193,7 @@ in
     secrets = mkOption {
       type = attrsOf secretType;
       default = { };
-      apply = v: (mapAttrs (_: secret: secret.parts // {definition = secret;}) v);
+      apply = v: (mapAttrs (_: secret: secret.parts // { definition = secret; }) v);
       description = "Host-local secrets";
     };
     system.secretsData = mkOption {
