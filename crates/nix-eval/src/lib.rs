@@ -1,12 +1,13 @@
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
-use std::ptr::null_mut;
+use std::ptr::{null, null_mut};
 use std::sync::LazyLock;
+use std::{array, fmt, slice};
 use std::{collections::HashMap, path::PathBuf};
-use std::{fmt, slice};
 
 use anyhow::{Context, anyhow, bail};
+use itertools::Itertools;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -18,25 +19,26 @@ use self::nix_cxx::set_fetcher_setting;
 use self::nix_raw::{
 	BindingsBuilder as c_bindings_builder, EvalState as c_eval_state, GC_SUCCESS,
 	GC_allow_register_threads, GC_get_stack_base, GC_register_my_thread, GC_stack_base,
-	GC_thread_is_registered, GC_unregister_my_thread, ListBuilder as c_list_builder,
-	Store as c_store, StorePath as c_store_path, alloc_value, bindings_builder_free,
-	bindings_builder_insert, c_context, c_context_create, c_context_free, clear_err, err_code,
-	err_info_msg, err_msg, eval_state_build, eval_state_builder_load, eval_state_builder_new,
-	eval_state_builder_set_eval_setting, expr_eval_from_string, fetchers_settings,
-	fetchers_settings_free, fetchers_settings_new, flake_lock, flake_lock_flags,
-	flake_lock_flags_free, flake_lock_flags_new, flake_reference,
+	GC_thread_is_registered, GC_unregister_my_thread, ListBuilder as c_list_builder, PrimOp,
+	PrimOpFun, Store as c_store, StorePath as c_store_path, alloc_primop, alloc_value,
+	bindings_builder_free, bindings_builder_insert, c_context, c_context_create, c_context_free,
+	clear_err, copy_value, err_code, err_info_msg, err_msg, eval_state_build,
+	eval_state_builder_load, eval_state_builder_new, eval_state_builder_set_eval_setting,
+	expr_eval_from_string, fetchers_settings, fetchers_settings_free, fetchers_settings_new,
+	flake_lock, flake_lock_flags, flake_lock_flags_free, flake_lock_flags_new, flake_reference,
 	flake_reference_and_fragment_from_string, flake_reference_parse_flags,
 	flake_reference_parse_flags_free, flake_reference_parse_flags_new,
 	flake_reference_parse_flags_set_base_directory, flake_settings, flake_settings_free,
 	flake_settings_new, gc_now as gc_now_raw, get_attr_byname, get_attr_name_byidx, get_attrs_size,
 	get_list_byidx, get_list_size, get_string, get_type, has_attr_byname, init_bool, init_int,
-	init_string, libexpr_init, libstore_init, libutil_init, list_builder_free, list_builder_insert,
-	locked_flake, locked_flake_free, locked_flake_get_output_attrs, make_attrs,
-	make_bindings_builder, make_list, make_list_builder, realised_string, realised_string_free,
-	realised_string_get_buffer_size, realised_string_get_buffer_start,
-	realised_string_get_store_path, realised_string_get_store_path_count, set_err_msg, setting_set,
-	state_free, store_open, store_parse_path, store_path_free, store_path_name, string_realise,
-	value, value_call, value_decref, value_incref,
+	init_primop, init_string, libexpr_init, libstore_init, libutil_init, list_builder_free,
+	list_builder_insert, locked_flake, locked_flake_free, locked_flake_get_output_attrs,
+	make_attrs, make_bindings_builder, make_list, make_list_builder, realised_string,
+	realised_string_free, realised_string_get_buffer_size, realised_string_get_buffer_start,
+	realised_string_get_store_path, realised_string_get_store_path_count, register_primop,
+	set_err_msg, setting_set, state_free, store_copy_closure, store_get_fs_closure, store_open,
+	store_parse_path, store_path_free, store_path_name, string_realise, value, value_call,
+	value_decref, value_incref,
 };
 
 // Contains macros helpers
@@ -166,6 +168,7 @@ impl Drop for ThreadRegisterGuard {
 	}
 }
 
+#[repr(transparent)]
 pub struct NixContext(*mut c_context);
 impl NixContext {
 	pub fn set_err(&mut self, err: NixErrorKind, msg: &CStr) {
@@ -540,6 +543,7 @@ impl Drop for RealisedString {
 	}
 }
 
+#[repr(transparent)]
 pub struct Value(*mut value);
 
 unsafe impl Send for Value {}
@@ -626,6 +630,12 @@ impl Drop for ListBuilder {
 }
 
 impl Value {
+	pub fn new_primop(v: NativeFn) -> Self {
+		let out = Self::new_uninit();
+		with_default_context(|c, _| unsafe { init_primop(c, out.0, v.0) })
+			.expect("primop initialization should not fail");
+		out
+	}
 	pub fn new_attrs(v: HashMap<&str, Value>) -> Self {
 		let out = Self::new_uninit();
 		let mut b = AttrsBuilder::new(v.len());
@@ -913,6 +923,70 @@ pub fn init_libraries() {
 	nix_logging_cxx::apply_tracing_logger();
 }
 
+unsafe extern "C" fn nix_primop_closure_adapter<const N: usize>(
+	user_data: *mut c_void,
+	context: *mut c_context,
+	state: *mut nix_raw::EvalState,
+	args: *mut *mut value,
+	ret: *mut value,
+) {
+	let user_closure: &UserClosure<N> = unsafe { &*user_data.cast_const().cast() };
+	let args: [&Value; N] = array::from_fn(|i| {
+		let v: &Value = unsafe { &*args.add(i).cast_const().cast() };
+		v
+	});
+	let ctx: &mut NixContext = unsafe { &mut *context.cast() };
+
+	match user_closure(args) {
+		Ok(v) => {
+			unsafe { copy_value(context, ret, v.0) };
+		}
+		Err(e) => {
+			ctx.set_err(
+				NixErrorKind::Unknown,
+				&CString::new(e.to_string()).expect("error should not contain internal nuls"),
+			);
+		}
+	}
+}
+
+type UserClosure<const N: usize> = Box<dyn Fn([&Value; N]) -> Result<Value>>;
+
+struct NativeFn(*mut PrimOp);
+impl NativeFn {
+	pub fn new<const N: usize>(
+		name: &'static CStr,
+		doc: &'static CStr,
+		args: [&'static CStr; N],
+		f: impl Fn([&Value; N]) -> Result<Value> + 'static,
+	) -> Self {
+		// Double-boxing to make it thin pointer, as vtable gets outside of first Box
+		let closure: Box<UserClosure<N>> = Box::new(Box::new(f));
+		let f: PrimOpFun = Some(nix_primop_closure_adapter::<N>);
+		let mut args = args.into_iter().map(|v| v.as_ptr()).collect_vec();
+		args.push(null());
+		let args = args.as_mut_ptr();
+		let primop = with_default_context(|c, _| unsafe {
+			alloc_primop(
+				c,
+				f,
+				N as i32,
+				name.as_ptr(),
+				args,
+				doc.as_ptr(),
+				Box::into_raw(closure).cast(),
+			)
+		})
+		.expect("primop allocation should not fail");
+
+		Self(primop)
+	}
+	pub fn register(self) {
+		with_default_context(|c, _| unsafe { register_primop(c, self.0) })
+			.expect("primop registration should not fail");
+	}
+}
+
 struct StorePath(*mut c_store_path);
 impl StorePath {}
 
@@ -948,6 +1022,20 @@ fn test_native() -> Result<()> {
 
 	let s = nix_go!(attrs.packages["x86_64-linux"].fleet.drvPath);
 	let s = CString::new(s.to_string()?).expect("path str is cstring");
+
+	let uppercase_suffix = Value::new_primop(NativeFn::new(
+		c"uppercase_suffix",
+		c"make string uppercase and add suffix",
+		[c"str", c"suffix"],
+		|[str, suffix]: [&Value; 2]| {
+			let str = str.to_string()?;
+			let suffix = suffix.to_string()?;
+			Ok(Value::new_str(&format!("{}{suffix}", str.to_uppercase())))
+		},
+	));
+
+	let test_result: String = nix_go_json!(test_data.testPrimop(uppercase_suffix));
+	assert_eq!(test_result, "PREFIX_BODY_SUFFIX");
 
 	let nix_ctx = NixContext::new();
 	let store = GLOBAL_STATE.store.parse_path(s.as_c_str())?;

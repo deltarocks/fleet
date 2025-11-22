@@ -25,7 +25,11 @@
     };
     # DeterminateSystem's nix fork is controversial, but I don't mind it,
     # and it has lazy-trees support which is useful for fleet.
-    nix.url = "github:deltarocks/nix/fleet";
+    nix = {
+      url = "github:deltarocks/nix/fleet";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.flake-parts.follows = "flake-parts";
+    };
   };
   outputs =
     inputs:
@@ -56,6 +60,7 @@
               v = "Hello";
             };
             testString = "hello";
+            testPrimop = op: "PREFIX_" + (op "body" "_SUFFIX");
           };
 
           # To be used with https://github.com/NixOS/nix/pull/8892
