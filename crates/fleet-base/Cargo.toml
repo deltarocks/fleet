@@ -8,7 +8,7 @@ rust-version.workspace = true
 age.workspace = true
 anyhow.workspace = true
 better-command.workspace = true
-chrono = "0.4.41"
+chrono = { version = "0.4.41", features = ["serde"] }
 clap = { workspace = true, features = ["derive"] }
 fleet-shared.workspace = true
 futures = "0.3.31"
@@ -27,5 +27,6 @@ tempfile.workspace = true
 thiserror.workspace = true
 time = { version = "0.3.41", features = ["parsing"] }
 tokio.workspace = true
-tokio-util = "0.7.15"
+tokio-util = { version = "0.7.15", features = ["codec"] }
+toml_edit = "0.23.7"
 tracing.workspace = true

@@ -1,0 +1,11 @@
+[package]
+name = "repl-plugin-unstable"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+fleet-base = { version = "0.1.0", path = "../../crates/fleet-base" }

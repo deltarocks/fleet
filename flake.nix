@@ -185,6 +185,7 @@
                 inputs'.nix.packages.nix-flake-c
                 inputs'.nix.packages.nix-fetchers-c
                 inputs'.nix.packages.nix-store-c
+                inputs'.nix.packages.nix
 
                 (rage.overrideAttrs { cargoFeatures = [ "plugin" ]; })
               ];

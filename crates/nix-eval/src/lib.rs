@@ -952,7 +952,7 @@ unsafe extern "C" fn nix_primop_closure_adapter<const N: usize>(
 
 type UserClosure<const N: usize> = Box<dyn Fn([&Value; N]) -> Result<Value>>;
 
-struct NativeFn(*mut PrimOp);
+pub struct NativeFn(*mut PrimOp);
 impl NativeFn {
 	pub fn new<const N: usize>(
 		name: &'static CStr,
