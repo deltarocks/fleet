@@ -2,10 +2,10 @@
   "nodes": {
     "crane": {
       "locked": {
-        "lastModified": 1763511871,
+        "lastModified": 1766181779,
         "owner": "ipetkov",
         "repo": "crane",
-        "rev": "099f9014bc8d0cd6e445470ea1df0fd691d5a548",
+        "rev": "0263f510ba38bee5b7f817498066adaad694e50b",
         "type": "github"
       },
       "original": {
@@ -37,10 +37,10 @@
         ]
       },
       "locked": {
-        "lastModified": 1763759067,
+        "lastModified": 1765835352,
         "owner": "hercules-ci",
         "repo": "flake-parts",
-        "rev": "2cccadc7357c0ba201788ae99c4dfa90728ef5e0",
+        "rev": "a34fae9c08a15ad73f295041fec82323541400a9",
         "type": "github"
       },
       "original": {
@@ -111,10 +111,10 @@
         "nixpkgs-regression": "nixpkgs-regression"
       },
       "locked": {
-        "lastModified": 1763844027,
+        "lastModified": 1766192142,
         "owner": "deltarocks",
         "repo": "nix",
-        "rev": "6b07ab20f1a65bd4aa54ec1418ff6f179dde64ac",
+        "rev": "c8a41aa8c7193968956094c7f4783405bdd050e0",
         "type": "github"
       },
       "original": {
@@ -126,15 +126,15 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1763844746,
+        "lastModified": 1766181714,
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "d20f025296df84f7d97dee7c1a069bea8b17c8f2",
+        "rev": "ff2da5fee8b3248cac330f14eac98228620beab0",
         "type": "github"
       },
       "original": {
         "owner": "nixos",
-        "ref": "release-25.05",
+        "ref": "release-25.11",
         "repo": "nixpkgs",
         "type": "github"
       }
@@ -190,10 +190,10 @@
         ]
       },
       "locked": {
-        "lastModified": 1763778964,
+        "lastModified": 1766112155,
         "owner": "oxalica",
         "repo": "rust-overlay",
-        "rev": "7f3aa46dfa230ec2a4ca9281186a24771650ccd1",
+        "rev": "2a6db3fc1c27ae77f9caa553d7609b223cb770b5",
         "type": "github"
       },
       "original": {
@@ -223,10 +223,10 @@
         ]
       },
       "locked": {
-        "lastModified": 1762938485,
+        "lastModified": 1766000401,
         "owner": "numtide",
         "repo": "treefmt-nix",
-        "rev": "5b4ee75aeefd1e2d5a1cc43cf6ba65eba75e83e4",
+        "rev": "42d96e75aa56a3f70cab7e7dc4a32868db28e8fd",
         "type": "github"
       },
       "original": {
