@@ -189,7 +189,14 @@ pub async fn deploy_task(
 				built.clone()
 			};
 			let switch_script = specialised.join("bin/switch-to-configuration");
-			let mut cmd = host.cmd(switch_script).in_current_span().await?;
+			let mut cmd = host.cmd("systemd-run").in_current_span().await?;
+			cmd.arg("--collect")
+				.arg("--no-ask-password")
+				.arg("--pipe")
+				.arg("--quiet")
+				.arg("--service-type=exec")
+				.arg("--unit=fleet-switch-to-configuration")
+				.arg(switch_script);
 			if deploy_kind == DeployKind::NixosLustrate {
 				cmd.env("NIXOS_INSTALL_BOOTLOADER", "1");
 			}
