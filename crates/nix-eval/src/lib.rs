@@ -966,9 +966,9 @@ impl NativeFn {
 		let mut args = args.into_iter().map(|v| v.as_ptr()).collect_vec();
 		args.push(null());
 		let args = args.as_mut_ptr();
-		let primop = with_default_context(|c, _| unsafe {
+		let primop = unsafe {
 			alloc_primop(
-				c,
+				null_mut(),
 				f,
 				N as i32,
 				name.as_ptr(),
@@ -976,14 +976,14 @@ impl NativeFn {
 				doc.as_ptr(),
 				Box::into_raw(closure).cast(),
 			)
-		})
-		.expect("primop allocation should not fail");
+		};
+
+		assert!(!primop.is_null(), "primop allocation should not fail");
 
 		Self(primop)
 	}
 	pub fn register(self) {
-		with_default_context(|c, _| unsafe { register_primop(c, self.0) })
-			.expect("primop registration should not fail");
+		unsafe { register_primop(null_mut(), self.0) };
 	}
 }
 
@@ -999,6 +999,17 @@ impl Drop for StorePath {
 #[test_log::test]
 fn test_native() -> Result<()> {
 	init_libraries();
+	NativeFn::new(
+		c"__uppercaseSuffix2",
+		c"make string uppercase and add suffix",
+		[c"str", c"suffix"],
+		|[str, suffix]: [&Value; 2]| {
+			let str = str.to_string()?;
+			let suffix = suffix.to_string()?;
+			Ok(Value::new_str(&format!("{}{suffix}", str.to_uppercase())))
+		},
+	)
+	.register();
 
 	let mut fetch_settings = FetchSettings::new();
 	fetch_settings.set(c"warn-dirty", c"false");
@@ -1036,6 +1047,8 @@ fn test_native() -> Result<()> {
 
 	let test_result: String = nix_go_json!(test_data.testPrimop(uppercase_suffix));
 	assert_eq!(test_result, "PREFIX_BODY_SUFFIX");
+	let test_result: String = nix_go_json!(builtins.uppercaseSuffix2("test")("suffix"));
+	assert_eq!(test_result, "TESTsuffix");
 
 	let nix_ctx = NixContext::new();
 	let store = GLOBAL_STATE.store.parse_path(s.as_c_str())?;

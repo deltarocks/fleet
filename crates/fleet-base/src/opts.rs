@@ -22,7 +22,7 @@ use nom::{
 
 use crate::{
 	fleetdata::FleetData,
-	host::{Config, ConfigHost, FleetConfigInternals},
+	host::{Config, ConfigHost, FleetConfigInternals}, primops::init_primops,
 };
 
 #[derive(Clone)]
@@ -212,6 +212,8 @@ impl FleetOpts {
 		let bytes =
 			std::fs::read_to_string(&fleet_data_path).context("reading fleet state (fleet.nix)")?;
 		let data = Arc::new(Mutex::new(FleetData::from_str(&bytes)?));
+
+		init_primops(data.clone());
 
 		let mut fetch_settings = FetchSettings::new();
 		fetch_settings.set(c"warn-dirty", c"false");

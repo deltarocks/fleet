@@ -103,7 +103,7 @@ let
         };
       };
       config = {
-        parts = builtins.fleet_ensure_host_secret sysConfig.networking.hostName secretName config.generator;
+        parts = builtins.fleetEnsureHostSecret sysConfig.networking.hostName secretName config.generator;
       };
     }
   );

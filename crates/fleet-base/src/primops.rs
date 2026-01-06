@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use nix_eval::{NativeFn, Value};
+use tracing::info;
 
 use crate::fleetdata::{FleetData, FleetSecrets};
 
@@ -23,21 +24,9 @@ trait SecretsBackend {
 struct FsSecretsBackend {}
 
 pub fn init_primops(secrets: Arc<Mutex<FleetData>>) {
+	info!("initializing primops");
 	NativeFn::new(
-		c"fleet_ensure_host_secret",
-		c"Ensure secret existence for a host, regenerating it in case of some mismatch",
-		[c"host", c"secret", c"generator"],
-		|[host, secret, generator]| {
-			todo!("ensure secret");
-			Ok(Value::new_attrs(HashMap::from_iter([(
-				"raw",
-				Value::new_str("rawData"),
-			)])))
-		},
-	)
-	.register();
-	NativeFn::new(
-		c"fleet_ensure_host_secret",
+		c"__fleetEnsureHostSecret",
 		c"Ensure secret existence for a host, regenerating it in case of some mismatch",
 		[c"host", c"secret", c"generator"],
 		|[host, secret, generator]| {

@@ -47,11 +47,7 @@ macro_rules! nix_expr_inner {
 		nix_expr_inner!(@field(out) $($tt)*);
 		out
 	}};
-	($v:literal) => {{
-		use $crate::macros::NixExprBuilder;
-		NixExprBuilder::string($v)
-	}};
-	({$v:expr}) => {{
+	($v:expr) => {{
 		$crate::Value::serialized(&$v)?
 	}}
 }
