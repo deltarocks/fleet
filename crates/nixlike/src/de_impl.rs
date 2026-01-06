@@ -2,7 +2,7 @@ use std::convert::{TryFrom, TryInto};
 
 use linked_hash_map::LinkedHashMap;
 use serde::{
-	Deserializer,
+	Deserializer, Serialize,
 	de::{self, MapAccess, SeqAccess},
 };
 
@@ -138,6 +138,10 @@ impl<'de> Deserializer<'de> for Value {
 			Value::Object(o) => visitor.visit_map(ObjectAccess::new(o)),
 			Value::Array(a) => visitor.visit_seq(ArrayAccess::new(a)),
 			Value::Null => visitor.visit_none(),
+			Value::Import(d) => {
+				let value = d.serialize(crate::se_impl::MySerialize)?;
+				value.deserialize_any(visitor)
+			}
 		}
 	}
 
@@ -323,7 +327,13 @@ impl<'de> Deserializer<'de> for Value {
 	where
 		V: serde::de::Visitor<'de>,
 	{
-		visitor.visit_map(self.parse_object().map(ObjectAccess::new)?)
+		match self {
+			Value::Import(d) => {
+				let value = d.serialize(crate::se_impl::MySerialize)?;
+				value.deserialize_map(visitor)
+			}
+			v => visitor.visit_map(v.parse_object().map(ObjectAccess::new)?),
+		}
 	}
 
 	fn deserialize_struct<V>(

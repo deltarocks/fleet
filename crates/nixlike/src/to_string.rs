@@ -1,3 +1,5 @@
+use itertools::Itertools;
+
 use crate::Value;
 
 pub fn write_identifier(k: &str, out: &mut String) {
@@ -76,6 +78,10 @@ pub fn write_nix_str(str: &str, out: &mut String, padding: &mut usize) {
 	}
 }
 
+fn write_nix_import(import: &str, out: &mut String, padding: &mut usize) {
+	out.push_str("import ");
+	write_nix_str(import, out, padding)
+}
 fn write_nix_buf(value: &Value, out: &mut String, padding: &mut usize) {
 	match value {
 		Value::Null => out.push_str("null"),
@@ -98,9 +104,17 @@ fn write_nix_buf(value: &Value, out: &mut String, padding: &mut usize) {
 				out.push(']');
 			}
 		}
+		Value::Import(i) => write_nix_import(&i.import, out, padding),
 		Value::Object(obj) => {
 			if obj.is_empty() {
-				out.push_str("{ }")
+				out.push_str("{ }");
+			} else if obj.len() == 2
+				&& let Some([(importk, Value::String(importv)), (markerk, Value::Null)]) =
+					obj.iter().next_array::<2>()
+				&& markerk == "__magic_marker"
+				&& importk == "__magic_import"
+			{
+				write_nix_import(importv, out, padding)
 			} else {
 				out.push_str("{\n");
 				*padding += 1;

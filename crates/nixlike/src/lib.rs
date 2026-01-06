@@ -5,6 +5,8 @@
 //! expressions and expect it to work, only basic primitives are supported, and there is no
 //! variables/recursive records, interpolation, e.t.c.
 
+use std::marker::PhantomData;
+
 use linked_hash_map::LinkedHashMap;
 use peg::str::LineCol;
 use se_impl::MySerialize;
@@ -39,7 +41,26 @@ pub enum Value {
 	Boolean(bool),
 	Object(LinkedHashMap<String, Value>),
 	Array(Vec<Value>),
+	Import(NixImport),
 	Null,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NixImport {
+	#[serde(rename = "__magic_import")]
+	import: String,
+	// Magic values should have exactly two values to avoid pretty-printing
+	// as nix inline object value
+	__magic_marker: PhantomData<()>,
+}
+
+impl NixImport {
+	pub fn new(import: impl AsRef<str>) -> Self {
+		Self {
+			import: import.as_ref().to_string(),
+			__magic_marker: PhantomData,
+		}
+	}
 }
 
 fn count_spaces(l: &str) -> usize {
@@ -150,8 +171,12 @@ pub grammar nixlike() for str {
 	rule array() -> Vec<Value>
 		= "[" _ v:value()**_ _ "]" {v}
 
+	rule import() -> NixImport
+		= "import" _ s:string() {NixImport::new(s)}
+
 	rule value() -> Value
-		= o:object() { Value::Object(o) }
+		= i:import() { Value::Import(i) }
+		/ o:object() { Value::Object(o) }
 		/ a:array() { Value::Array(a) }
 		/ s:string() { Value::String(s) }
 		/ "null" { Value::Null }
@@ -191,26 +216,43 @@ pub fn format_identifier(i: &str) -> String {
 	out
 }
 
-#[test]
-fn test() {
-	assert_eq!(serialize("Hello\nworld").unwrap(), "\"Hello\\nworld\"\n");
-}
 pub fn format_nix(value: &String) -> String {
 	// TODO
 	value.to_owned()
 }
 
-#[test]
-fn parse_multiline() {
-	// First line is ignored, unless there is a significant characters.
-	assert_eq!(nixlike::multiline_string("''\n''").expect("parse"), "");
-	// Rest of the lines are processed normally.
-	assert_eq!(nixlike::multiline_string("''\n\n''").expect("parse"), "\n");
-	// Example with significant character on first line.
-	assert_eq!(nixlike::multiline_string("''t\n''").expect("parse"), "t\n");
-	// There might be nothing in multiline string block.
-	assert_eq!(nixlike::multiline_string("''''").expect("parse"), "");
-	// And there also might just be spaces, they are removed due to dedent, and output is empty because
-	// first line was also ignored due to missing significant characters.
-	assert_eq!(nixlike::multiline_string("''    ''").expect("parse"), "");
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn test() {
+		assert_eq!(serialize("Hello\nworld").unwrap(), "\"Hello\\nworld\"");
+	}
+
+	#[test]
+	fn parse_multiline() {
+		// First line is ignored, unless there is a significant characters.
+		assert_eq!(nixlike::multiline_string("''\n''").expect("parse"), "");
+		// Rest of the lines are processed normally.
+		assert_eq!(nixlike::multiline_string("''\n\n''").expect("parse"), "\n");
+		// Example with significant character on first line.
+		assert_eq!(nixlike::multiline_string("''t\n''").expect("parse"), "t\n");
+		// There might be nothing in multiline string block.
+		assert_eq!(nixlike::multiline_string("''''").expect("parse"), "");
+		// And there also might just be spaces, they are removed due to dedent, and output is empty because
+		// first line was also ignored due to missing significant characters.
+		assert_eq!(nixlike::multiline_string("''    ''").expect("parse"), "");
+	}
+
+	#[test]
+	fn test_nix_import_roundtrip() {
+		let import = NixImport::new("./some/path.nix");
+
+		let serialized = serialize(&import).expect("serialize");
+		assert_eq!(serialized, "import \"./some/path.nix\"");
+
+		let deserialized: NixImport = parse_str(&serialized).expect("deserialize");
+		assert_eq!(deserialized.import, "./some/path.nix");
+	}
 }
