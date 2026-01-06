@@ -133,6 +133,18 @@
                       "--enable-gc-assertions"
                     ];
                   });
+                  # Libsecret is stupidly huge
+                  # https://github.com/oxalica/rust-overlay/issues/211
+                  libsecret = final.stdenv.mkDerivation {
+                    name = "fake-libsecret";
+                    version = "1.0.0";
+                    unpackPhase = "true";
+                    buildPhase = "true";
+                    installPhase = ''
+                      mkdir -p $out/lib/
+                      echo "" | gcc -shared -o $out/lib/libsecret-1.so.0 -x c -
+                    '';
+                  };
                 })
               ];
             };
