@@ -8,33 +8,20 @@
   ...
 }:
 let
-  inherit (lib.options) mkOption mkEnableOption;
+  inherit (lib.options) mkOption;
   inherit (lib.attrsets) mapAttrs;
   inherit (lib.types)
     lazyAttrsOf
     deferredModule
     unspecified
-    str
     ;
   inherit (lib.strings) isPath;
-  inherit (lib.modules) mkIf mkOptionDefault;
+  inherit (lib.modules) mkOptionDefault;
 in
 {
   options.fleetModules = mkOption {
     type = lazyAttrsOf unspecified;
     default = { };
-  };
-  options.fleetNixosConfigurationsCompat = {
-    enable = mkEnableOption "Create nixosConfiguration output based on fleetConfiguration";
-    configuration = mkOption {
-      type = str;
-      description = "Which fleetConfiguration to use for compatibility";
-      default = "default";
-    };
-    data = mkOption {
-      type = unspecified;
-      description = "Imported fleet.nix file for fleet";
-    };
   };
   options.fleetConfigurations = mkOption {
     type = lazyAttrsOf deferredModule;
@@ -103,14 +90,6 @@ in
   config = {
     _module.args.fleetLib = import ../lib { inherit lib; };
     flake.fleetConfigurations = config.fleetConfigurations;
-    flake.nixosConfigurations =
-      let
-        cfg = config.fleetNixosConfigurationsCompat;
-      in
-      mkIf cfg.enable (
-        mapAttrs (name: host: host.nixos)
-          (config.fleetConfigurations.${cfg.configuration} cfg.data).config.hosts
-      );
     flake.fleetModules = config.fleetModules;
   };
 

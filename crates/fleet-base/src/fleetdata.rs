@@ -73,7 +73,7 @@ pub struct FleetData {
 	#[serde(default = "generate_gc_prefix")]
 	pub gc_root_prefix: String,
 
-	#[serde(default)]
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub manager_keys: Vec<ManagerKey>,
 
 	#[serde(default)]
@@ -149,12 +149,12 @@ pub struct FleetSecretData {
 #[must_use]
 pub struct FleetSecretDistribution {
 	#[serde(default)]
-	#[serde(skip_serializing_if = "Option::is_none")]
-	pub managed: Option<bool>,
-	#[serde(default)]
 	pub owners: BTreeSet<String>,
 	#[serde(flatten)]
 	pub secret: FleetSecretData,
+
+	#[serde(default, skip_serializing, alias="managed")]
+	pub _deprecated_managed: bool,
 }
 
 #[derive(Clone)]
@@ -244,9 +244,10 @@ impl<'d> VacantDistEntry<'d> {
 		} = self;
 		let idx = distributions.0.len();
 		distributions.0.push(FleetSecretDistribution {
-			managed: None,
 			owners: BTreeSet::from_iter([owner.clone()]),
 			secret,
+
+			_deprecated_managed: true,
 		});
 		OccupiedDistEntry {
 			distributions,
