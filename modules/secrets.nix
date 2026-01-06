@@ -1,6 +1,5 @@
 {
   lib,
-  config,
   ...
 }:
 let
@@ -18,7 +17,6 @@ let
     uniq
     ;
   inherit (lib.strings) concatStringsSep;
-  inherit (lib.attrsets) mapAttrs;
 
   sharedSecret =
     { config, ... }:
@@ -54,6 +52,12 @@ let
             Set to false if host permissions are revoked through alternative mechanisms like firewall rules.
           '';
         };
+        allowDifferent = mkOption {
+          type = bool;
+          description = ''
+            When adding owner, do not update secret value for other owners, instead creating a new distribution
+          '';
+        };
         generator = mkOption {
           type = uniq (nullOr (functionTo package));
           description = ''
@@ -84,32 +88,13 @@ let
 in
 {
   options = {
-    sharedSecrets = mkOption {
+    secrets = mkOption {
       type = attrsOf (submodule sharedSecret);
       default = { };
       description = "Collection of secrets shared across multiple hosts with configurable ownership";
     };
   };
   config = {
-    hosts = mapAttrs (
-      _: secretMap:
-      let
-        partsOf =
-          s:
-          removeAttrs s [
-            "createdAt"
-            "expiresAt"
-            "generationData"
-          ];
-
-      in
-      {
-        nixos.data.secrets = mapAttrs (_: s: partsOf s) secretMap;
-        # nixos.secrets = mapAttrs (
-        #   _: s: mapAttrs (_: _: {}) (partsOf s)
-        # ) secretMap;
-      }
-    ) config.data.hostSecrets;
     nixpkgs.overlays = [
       (final: prev: {
         mkSecretGenerators =

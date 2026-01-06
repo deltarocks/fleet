@@ -128,11 +128,6 @@
               overlays = [
                 (inputs.rust-overlay.overlays.default)
                 (final: prev: {
-                  boehmgc = prev.boehmgc.overrideAttrs (prevAttrs: {
-                    configureFlags = prevAttrs.configureFlags ++ [
-                      "--enable-gc-assertions"
-                    ];
-                  });
                   # Libsecret is stupidly huge
                   # https://github.com/oxalica/rust-overlay/issues/211
                   libsecret = final.stdenv.mkDerivation {

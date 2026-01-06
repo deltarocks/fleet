@@ -211,7 +211,7 @@ impl FleetOpts {
 		}
 		let bytes =
 			std::fs::read_to_string(&fleet_data_path).context("reading fleet state (fleet.nix)")?;
-		let data: Mutex<FleetData> = nixlike::parse_str(&bytes)?;
+		let data = Mutex::new(FleetData::from_str(&bytes)?);
 
 		let mut fetch_settings = FetchSettings::new();
 		fetch_settings.set(c"warn-dirty", c"false");

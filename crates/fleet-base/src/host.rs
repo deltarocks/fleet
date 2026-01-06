@@ -22,7 +22,7 @@ use tracing::warn;
 
 use crate::{
 	command::MyCommand,
-	fleetdata::{FleetData, FleetHostSecret, FleetSharedSecret},
+	fleetdata::{FleetData, FleetSecretData, FleetSecretDistribution, FleetSecretDistributions},
 	secret::{HostSecretDefinition, SharedSecretDefinition},
 };
 
@@ -623,80 +623,48 @@ impl Config {
 		let config_field = &self.config_field;
 		nix_go!(config_field.sharedSecrets).list_fields()
 	}
-	/// Shared secrets configured in fleet.nix
-	pub fn list_shared(&self) -> Vec<String> {
-		let data = self.data();
-		data.shared_secrets.keys().cloned().collect()
-	}
 	pub fn has_shared(&self, name: &str) -> bool {
 		let data = self.data();
-		data.shared_secrets.contains_key(name)
+		data.secrets.contains(name)
 	}
-	pub fn replace_shared(&self, name: String, shared: FleetSharedSecret) {
+	pub fn replace_shared(&self, name: String, shared: FleetSecretDistribution) {
 		let mut data = self.data_mut();
-		data.shared_secrets.insert(name.to_owned(), shared);
+		data.secrets.set_data(name, shared);
 	}
 	pub fn remove_shared(&self, secret: &str) {
 		let mut data = self.data_mut();
-		data.shared_secrets.remove(secret);
+		data.secrets.remove(secret);
 	}
 
-	pub fn list_secrets(&self, host: &str) -> Vec<String> {
-		let data = self.data();
-		let mut out = data
-			.host_secrets
-			.get(host)
-			.map(|s| s.keys().cloned().collect::<Vec<String>>())
-			.unwrap_or_default();
-
-		for (name, shared) in data.shared_secrets.iter() {
-			if shared.owners.contains(host) {
-				out.push(name.clone());
-			}
-		}
-
-		out
+	pub fn list_secrets_for_owner(&self, host: &str) -> Vec<String> {
+		let data = self.data_mut();
+		data.secrets.keys_for_owner(host).cloned().collect()
+	}
+	pub fn list_secrets(&self) -> Vec<String> {
+		let data = self.data_mut();
+		data.secrets.keys().cloned().collect()
 	}
 
 	pub fn has_secret(&self, host: &str, secret: &str) -> bool {
 		let data = self.data();
-		let Some(host_secrets) = data.host_secrets.get(host) else {
-			return false;
-		};
-		host_secrets.contains_key(secret)
+		data.secrets.contains_for_owner(secret, host)
 	}
-	pub fn insert_secret(&self, host: &str, secret: String, value: FleetHostSecret) {
+	pub fn insert_secret(&self, host: String, secret: String, value: FleetSecretData) {
 		let mut data = self.data_mut();
-		let host_secrets = data.host_secrets.entry(host.to_owned()).or_default();
-		host_secrets.insert(secret, value);
+		data.secrets.set_single_data(secret, host, value);
 	}
 	pub fn remove_secret(&self, host: &str, secret: &str) {
 		let mut data = self.data_mut();
-		let host_secrets = data.host_secrets.entry(host.to_owned()).or_default();
-		host_secrets.remove(secret);
+		data.secrets.drop_owner_no_reencrypt(secret, host);
 	}
 
-	pub fn host_secret(&self, host: &str, secret: &str) -> Result<FleetHostSecret> {
+	pub fn host_secret(&self, host: &str, secret: &str) -> Option<FleetSecretDistribution> {
 		let data = self.data();
-		if let Some(host_secrets) = data.host_secrets.get(host) {
-			if let Some(secret) = host_secrets.get(secret) {
-				return Ok(secret.clone());
-			}
-		};
-		let Some(shared) = data.shared_secrets.get(secret) else {
-			bail!("machine {host} has no secret {secret}");
-		};
-		if !shared.owners.contains(host) {
-			bail!("shared secret {secret} is not owned by {host}");
-		};
-		Ok(FleetHostSecret {
-			managed: shared.managed,
-			secret: shared.secret.clone(),
-		})
+		data.secrets.get_single(secret, host).cloned()
 	}
-	pub fn shared_secret(&self, secret: &str) -> Result<Option<FleetSharedSecret>> {
+	pub fn shared_secret(&self, secret: &str) -> Option<FleetSecretDistributions> {
 		let data = self.data();
-		Ok(data.shared_secrets.get(secret).cloned())
+		data.secrets.get(secret).cloned()
 	}
 	pub fn shared_secret_definition(&self, secret: &str) -> Result<SharedSecretDefinition> {
 		let config_field = &self.config_field;
