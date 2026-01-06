@@ -12,7 +12,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 pub use anyhow::Result;
-use tracing::instrument;
+use tracing::{info, instrument, warn};
 
 use self::logging::{ErrorInfoBuilder, nix_logging_cxx};
 use self::nix_cxx::set_fetcher_setting;
@@ -22,7 +22,8 @@ use self::nix_raw::{
 	GC_thread_is_registered, GC_unregister_my_thread, ListBuilder as c_list_builder, PrimOp,
 	PrimOpFun, Store as c_store, StorePath as c_store_path, alloc_primop, alloc_value,
 	bindings_builder_free, bindings_builder_insert, c_context, c_context_create, c_context_free,
-	clear_err, copy_value, err_code, err_info_msg, err_msg, eval_state_build,
+	clear_err, copy_value, err_NIX_ERR_KEY, err_NIX_ERR_NIX_ERROR, err_NIX_ERR_OVERFLOW,
+	err_NIX_ERR_UNKNOWN, err_code, err_info_msg, err_msg, eval_state_build,
 	eval_state_builder_load, eval_state_builder_new, eval_state_builder_set_eval_setting,
 	expr_eval_from_string, fetchers_settings, fetchers_settings_free, fetchers_settings_new,
 	flake_lock, flake_lock_flags, flake_lock_flags_free, flake_lock_flags_new, flake_reference,
@@ -36,9 +37,8 @@ use self::nix_raw::{
 	make_attrs, make_bindings_builder, make_list, make_list_builder, realised_string,
 	realised_string_free, realised_string_get_buffer_size, realised_string_get_buffer_start,
 	realised_string_get_store_path, realised_string_get_store_path_count, register_primop,
-	set_err_msg, setting_set, state_free, store_copy_closure, store_get_fs_closure, store_open,
-	store_parse_path, store_path_free, store_path_name, string_realise, value, value_call,
-	value_decref, value_incref,
+	set_err_msg, setting_set, state_free, store_open, store_parse_path, store_path_free,
+	store_path_name, string_realise, value, value_call, value_decref, value_force, value_incref,
 };
 
 // Contains macros helpers
@@ -62,6 +62,7 @@ pub mod nix_cxx {
 		type nix_fetchers_settings;
 		include!("nix-eval/src/lib.hh");
 
+		#[allow(clippy::missing_safety_doc)]
 		unsafe fn set_fetcher_setting(
 			settings: *mut nix_fetchers_settings,
 			setting: *const c_char,
@@ -111,19 +112,19 @@ enum FunctorKind {
 #[derive(Debug)]
 #[repr(i32)]
 pub enum NixErrorKind {
-	Unknown = 1,
-	Overflow = 2,
-	Key = 3,
-	Generic = 4,
+	Unknown = err_NIX_ERR_UNKNOWN,
+	Overflow = err_NIX_ERR_OVERFLOW,
+	Key = err_NIX_ERR_KEY,
+	Generic = err_NIX_ERR_NIX_ERROR,
 }
 impl NixErrorKind {
 	fn from_int(v: c_int) -> Option<Self> {
 		Some(match v {
 			0 => return None,
-			-1 => Self::Unknown,
-			-2 => Self::Overflow,
-			-3 => Self::Key,
-			-4 => Self::Generic,
+			nix_raw::err_NIX_ERR_UNKNOWN => Self::Unknown,
+			nix_raw::err_NIX_ERR_OVERFLOW => Self::Overflow,
+			nix_raw::err_NIX_ERR_KEY => Self::Key,
+			nix_raw::err_NIX_ERR_NIX_ERROR => Self::Generic,
 			_ => {
 				debug_assert!(false, "unexpected nix error kind: {v}");
 				Self::Unknown
@@ -298,8 +299,10 @@ impl ThreadState {
 	}
 }
 
-static GLOBAL_STATE: LazyLock<GlobalState> =
-	LazyLock::new(|| GlobalState::new().expect("global state init shouldn't fail"));
+static GLOBAL_STATE: LazyLock<GlobalState> = LazyLock::new(|| {
+	info!("initializing nix global state");
+	GlobalState::new().expect("global state init shouldn't fail")
+});
 
 thread_local! {
 	static THREAD_STATE: RefCell<ThreadState> = RefCell::new(ThreadState::new().expect("thread state init shouldn't fail"));
@@ -424,7 +427,8 @@ impl Store {
 	}
 }
 
-struct EvalState(*mut c_eval_state);
+#[repr(transparent)]
+pub struct EvalState(*mut c_eval_state);
 unsafe impl Send for EvalState {}
 unsafe impl Sync for EvalState {}
 
@@ -697,7 +701,15 @@ impl Value {
 		let builtin = Self::eval("builtins.toString")?;
 		builtin.call(self.clone())
 	}
+	fn force(&mut self, s: *mut nix_raw::EvalState) -> Result<()> {
+		with_default_context(|c, _| unsafe { value_force(c, s, self.0) })?;
+		Ok(())
+	}
 	pub fn to_string(&self) -> Result<String> {
+		let ty = self.type_of();
+		if !matches!(ty, NixType::String) {
+			bail!("unexpected type: {ty:?}, expected string");
+		}
 		let mut str_out = String::new();
 		with_default_context(|c, _| unsafe {
 			get_string(c, self.0, Some(copy_nix_str), (&raw mut str_out).cast())
@@ -931,17 +943,39 @@ unsafe extern "C" fn nix_primop_closure_adapter<const N: usize>(
 	ret: *mut value,
 ) {
 	let user_closure: &UserClosure<N> = unsafe { &*user_data.cast_const().cast() };
+	let mut e = None;
 	let args: [&Value; N] = array::from_fn(|i| {
-		let v: &Value = unsafe { &*args.add(i).cast_const().cast() };
-		v
+		let v: &mut Value = unsafe { &mut *args.add(i).cast() };
+
+		info!("forcing arg");
+		if matches!(v.type_of(), NixType::Thunk)
+			&& let Err(err) = v.force(state)
+		{
+			e = Some(err);
+		};
+		v as &Value
 	});
+	info!("args forced");
 	let ctx: &mut NixContext = unsafe { &mut *context.cast() };
 
-	match user_closure(args) {
+	if let Some(e) = e {
+		warn!("set err = {e}");
+		unsafe { init_int(context, ret, 0) };
+		return ctx.set_err(
+			NixErrorKind::Unknown,
+			&CString::new(e.to_string()).expect("forcing argument value failed"),
+		);
+	}
+
+	let state: &EvalState = unsafe { std::mem::transmute(&state) };
+
+	match user_closure(state, args) {
 		Ok(v) => {
 			unsafe { copy_value(context, ret, v.0) };
 		}
 		Err(e) => {
+			unsafe { init_int(context, ret, 0) };
+			warn!("set err = {e:#?}");
 			ctx.set_err(
 				NixErrorKind::Unknown,
 				&CString::new(e.to_string()).expect("error should not contain internal nuls"),
@@ -950,7 +984,7 @@ unsafe extern "C" fn nix_primop_closure_adapter<const N: usize>(
 	}
 }
 
-type UserClosure<const N: usize> = Box<dyn Fn([&Value; N]) -> Result<Value>>;
+type UserClosure<const N: usize> = Box<dyn Fn(&EvalState, [&Value; N]) -> Result<Value>>;
 
 pub struct NativeFn(*mut PrimOp);
 impl NativeFn {
@@ -958,7 +992,7 @@ impl NativeFn {
 		name: &'static CStr,
 		doc: &'static CStr,
 		args: [&'static CStr; N],
-		f: impl Fn([&Value; N]) -> Result<Value> + 'static,
+		f: impl Fn(&EvalState, [&Value; N]) -> Result<Value> + 'static,
 	) -> Self {
 		// Double-boxing to make it thin pointer, as vtable gets outside of first Box
 		let closure: Box<UserClosure<N>> = Box::new(Box::new(f));
@@ -1003,7 +1037,7 @@ fn test_native() -> Result<()> {
 		c"__uppercaseSuffix2",
 		c"make string uppercase and add suffix",
 		[c"str", c"suffix"],
-		|[str, suffix]: [&Value; 2]| {
+		|_, [str, suffix]: [&Value; 2]| {
 			let str = str.to_string()?;
 			let suffix = suffix.to_string()?;
 			Ok(Value::new_str(&format!("{}{suffix}", str.to_uppercase())))
@@ -1038,7 +1072,7 @@ fn test_native() -> Result<()> {
 		c"uppercase_suffix",
 		c"make string uppercase and add suffix",
 		[c"str", c"suffix"],
-		|[str, suffix]: [&Value; 2]| {
+		|es, [str, suffix]: [&Value; 2]| {
 			let str = str.to_string()?;
 			let suffix = suffix.to_string()?;
 			Ok(Value::new_str(&format!("{}{suffix}", str.to_uppercase())))

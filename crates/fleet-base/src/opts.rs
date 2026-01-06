@@ -22,7 +22,8 @@ use nom::{
 
 use crate::{
 	fleetdata::FleetData,
-	host::{Config, ConfigHost, FleetConfigInternals}, primops::init_primops,
+	host::{Config, ConfigHost, FleetConfigInternals},
+	primops::{PRIMOPS_DATA, init_primops},
 };
 
 #[derive(Clone)]
@@ -213,7 +214,7 @@ impl FleetOpts {
 			std::fs::read_to_string(&fleet_data_path).context("reading fleet state (fleet.nix)")?;
 		let data = Arc::new(Mutex::new(FleetData::from_str(&bytes)?));
 
-		init_primops(data.clone());
+		init_primops();
 
 		let mut fetch_settings = FetchSettings::new();
 		fetch_settings.set(c"warn-dirty", c"false");
@@ -264,8 +265,7 @@ impl FleetOpts {
 		if cfg!(debug_assertions) {
 			gc_now();
 		}
-
-		Ok(Config(Arc::new(FleetConfigInternals {
+		let config = Config(Arc::new(FleetConfigInternals {
 			directory,
 			data,
 			flake_outputs: flake,
@@ -275,6 +275,12 @@ impl FleetOpts {
 			default_pkgs,
 			nixpkgs,
 			localhost: self.localhost.to_owned(),
-		})))
+		}));
+
+		PRIMOPS_DATA
+			.set(config.clone())
+			.map_err(|_| ())
+			.expect("only one fleet config may exist per process");
+		Ok(config)
 	}
 }

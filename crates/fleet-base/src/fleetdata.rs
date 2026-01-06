@@ -121,12 +121,12 @@ pub fn encrypt_secret_data<'r>(
 	})
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct FleetSecretPart {
 	pub raw: SecretData,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 #[must_use]
 pub struct FleetSecretData {
@@ -144,7 +144,7 @@ pub struct FleetSecretData {
 	pub generation_data: Value,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 #[must_use]
 pub struct FleetSecretDistribution {

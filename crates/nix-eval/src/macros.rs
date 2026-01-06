@@ -16,7 +16,12 @@ macro_rules! nix_expr_inner {
 		$(nix_expr_inner!(@obj($o) $($tt)*);)?
 	}};
 	(@obj($o:ident)) => {{}};
-	(Obj { $($tt:tt)* }) => {{
+	(Obj { }) => {{
+		use $crate::{nix_expr_inner};
+		let out = std::collections::hash_map::HashMap::new();
+		Value::new_attrs(out)
+	}};
+	(Obj { $($tt:tt)+ }) => {{
 		use $crate::{nix_expr_inner};
 		let mut out = std::collections::hash_map::HashMap::new();
 		nix_expr_inner!(@obj(out) $($tt)*);

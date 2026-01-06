@@ -19,7 +19,6 @@ let
     submodule
     str
     attrsOf
-    nullOr
     unspecified
     uniq
     functionTo
@@ -77,13 +76,12 @@ let
     {
       options = {
         parts = mkOption {
-          type = attrsOf (secretPartType secretName);
+          type = uniq (attrsOf (secretPartType secretName));
           description = "Definition of secret parts";
         };
         generator = mkOption {
-          type = uniq (nullOr (functionTo package));
+          type = uniq (functionTo package);
           description = "Derivation to evaluate for secret generation";
-          default = null;
         };
         mode = mkOption {
           type = str;
@@ -103,14 +101,25 @@ let
         };
       };
       config = {
-        parts = builtins.fleetEnsureHostSecret sysConfig.networking.hostName secretName config.generator;
+        # C api is broken in regard to thunks
+        # https://github.com/NixOS/nix/issues/12800
+        parts = let 
+          hostName = sysConfig.networking.hostName;
+          generator = config.generator;
+        in builtins.deepSeq [
+          hostName
+          secretName
+          generator
+        ] (builtins.fleetEnsureHostSecret
+          hostName
+          secretName
+          generator);
       };
     }
   );
-  secretsData = (mapAttrs (_: s: s.definition) config.secrets);
   secretsFile = pkgs.writeTextFile {
     name = "secrets.json";
-    text = toJSON secretsData;
+    text = toJSON config.system.secretsData;
   };
   useSysusers =
     (config.systemd ? sysusers && config.systemd.sysusers.enable)
@@ -121,17 +130,20 @@ in
     secrets = mkOption {
       type = attrsOf secretType;
       default = { };
-      apply = v: (mapAttrs (_: secret: secret.parts // { definition = secret; }) v);
+      apply = mapAttrs (_: secret: secret.parts // {definition = secret;});
       description = "Host-local secrets";
     };
     system.secretsData = mkOption {
       type = unspecified;
-      default = { };
+      default = mapAttrs (_: s:
+        (removeAttrs s.definition ["generator"]) // {
+          parts = mapAttrs (_: part: removeAttrs part ["data"]) s.definition.parts;
+        }
+      ) config.secrets;
       description = "secrets.json contents";
     };
   };
   config = {
-    system = { inherit secretsData; };
     environment.systemPackages = [ pkgs.fleet-install-secrets ];
 
     systemd.services.fleet-install-secrets = mkIf useSysusers {

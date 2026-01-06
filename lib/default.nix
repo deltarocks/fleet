@@ -149,6 +149,23 @@ rec {
         }
       );
 
+    mkAskPass =
+      { prompt ? "Secret value", part ? "secret" }:
+      (
+        {
+          kdePackages,
+          mkImpureSecretGenerator,
+        }:
+        mkImpureSecretGenerator {
+          # TODO: Escape prompt?
+          script = ''
+            ${kdePackages.kdialog}/bin/kdialog --inputbox "${prompt}" | gh private -o $out/${part}
+          '';
+
+          parts.${part}.encrypted = true;
+        }
+      );
+
     /**
       Generate a random RSA keypair
 
@@ -251,6 +268,7 @@ rec {
     mkBytes
     mkHexBytes
     mkBase64Bytes
+    mkAskPass
     ;
 
   strings =
