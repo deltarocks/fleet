@@ -211,7 +211,7 @@ I want to build ansible-like script execution in fleet for this kind of tasks.
   ];
   # And finally, I have secrets, which are shared between machines.
   # Note that this example is somewhat wrong, as this goes not into the machine configuration, but to fleet configuration.
-  sharedSecrets = {
+  secrets = {
     "ca.pem" = {
       # This is just the public key, no need to regenerate it to change owner list
       regenerateOnOwnerAdded = false;

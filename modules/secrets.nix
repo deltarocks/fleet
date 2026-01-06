@@ -5,7 +5,6 @@
 let
   inherit (lib.options) mkOption literalExpression;
   inherit (lib.types)
-    unspecified
     nullOr
     listOf
     str
@@ -67,21 +66,6 @@ let
             use `mkSecretGenerator` helpers to implement own generators.
           '';
           default = null;
-        };
-        expectedGenerationData = mkOption {
-          type = unspecified;
-          description = "Contextual metadata embedded within the secret part value";
-          default = null;
-        };
-        expectedPrivateParts = mkOption {
-          type = listOf str;
-          default = [ ];
-          description = "List of parts that are expected to be encrypted";
-        };
-        expectedPublicParts = mkOption {
-          type = listOf str;
-          default = [ ];
-          description = "List of parts that are expected to be public";
         };
       };
     };

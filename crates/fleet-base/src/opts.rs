@@ -211,7 +211,7 @@ impl FleetOpts {
 		}
 		let bytes =
 			std::fs::read_to_string(&fleet_data_path).context("reading fleet state (fleet.nix)")?;
-		let data = Mutex::new(FleetData::from_str(&bytes)?);
+		let data = Arc::new(Mutex::new(FleetData::from_str(&bytes)?));
 
 		let mut fetch_settings = FetchSettings::new();
 		fetch_settings.set(c"warn-dirty", c"false");
@@ -239,8 +239,7 @@ impl FleetOpts {
 		let builtins_field = Value::eval("builtins")?;
 
 		let fleet_root = flake.get_field("fleetConfigurations")?;
-		let data_val = Value::serialized(&data)?;
-		let fleet_field = nix_go!(fleet_root.default(data_val));
+		let fleet_field = nix_go!(fleet_root.default(Obj {}));
 
 		let config_field = nix_go!(fleet_field.config);
 

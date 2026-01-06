@@ -1,8 +1,6 @@
 use std::collections::BTreeSet;
 
-use anyhow::Result;
 use chrono::{DateTime, Utc};
-use nix_eval::{Value, nix_go, nix_go_json};
 
 use crate::fleetdata::FleetSecretData;
 
@@ -12,63 +10,6 @@ pub struct Expectations {
 	pub generation_data: serde_json::Value,
 	pub public_parts: BTreeSet<String>,
 	pub private_parts: BTreeSet<String>,
-}
-
-pub struct HostSecretDefinition(pub(crate) String, pub(crate) Value);
-impl HostSecretDefinition {
-	pub fn is_managed(&self) -> Result<bool> {
-		let def = self.definition_value()?;
-		Ok(!nix_go!(def.generator).is_null())
-	}
-	pub fn is_shared(&self) -> Result<bool> {
-		let def = self.definition_value()?;
-		Ok(nix_go_json!(def.shared))
-	}
-	pub fn expectations(&self) -> Result<Expectations> {
-		let def = self.definition_value()?;
-		let parts = nix_go!(def.parts);
-
-		let mut public_parts = BTreeSet::new();
-		let mut private_parts = BTreeSet::new();
-		for part in parts.list_fields()? {
-			if nix_go_json!(parts[&part].encrypted) {
-				private_parts.insert(part.clone());
-			} else {
-				public_parts.insert(part.clone());
-			}
-		}
-
-		Ok(Expectations {
-			owners: BTreeSet::from([self.0.clone()]),
-			generation_data: nix_go_json!(def.expectedGenerationData),
-			public_parts,
-			private_parts,
-		})
-	}
-	pub fn definition_value(&self) -> Result<Value> {
-		let value = &self.1;
-		Ok(nix_go!(value.definition))
-	}
-}
-
-pub struct SharedSecretDefinition(pub(crate) Value);
-impl SharedSecretDefinition {
-	pub fn is_managed(&self) -> Result<bool> {
-		let value = &self.0;
-		Ok(!nix_go!(value.generator).is_null())
-	}
-	pub fn expectations(&self) -> Result<Expectations> {
-		let value = &self.0;
-		Ok(Expectations {
-			owners: nix_go_json!(value.expectedOwners),
-			generation_data: nix_go_json!(value.expectedGenerationData),
-			public_parts: nix_go_json!(value.expectedPublicParts),
-			private_parts: nix_go_json!(value.expectedPrivateParts),
-		})
-	}
-	pub fn definition_value(&self) -> Value {
-		self.0.clone()
-	}
 }
 
 #[derive(thiserror::Error, Debug)]

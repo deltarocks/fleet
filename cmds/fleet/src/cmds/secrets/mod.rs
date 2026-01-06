@@ -11,11 +11,10 @@ use fleet_base::{
 	fleetdata::{FleetSecretData, FleetSecretDistribution, FleetSecretPart, encrypt_secret_data},
 	host::Config,
 	opts::FleetOpts,
-	secret::{Expectations, RegenerationReason, SharedSecretDefinition, secret_needs_regeneration},
+	secret::{Expectations, RegenerationReason, secret_needs_regeneration},
 };
 use fleet_shared::SecretData;
 use nix_eval::{NixType, Value, nix_go, nix_go_json};
-use owo_colors::OwoColorize;
 use serde::Deserialize;
 use tabled::{Table, Tabled};
 use tokio::{fs::read, task::spawn_blocking};
@@ -69,6 +68,7 @@ pub enum Secret {
 	},
 }
 
+/*
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip(config, secret, definition, prefer_identities))]
 async fn maybe_regenerate_shared_secret(
@@ -143,6 +143,7 @@ async fn maybe_regenerate_shared_secret(
 		Ok(secret)
 	}
 }
+*/
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -314,6 +315,7 @@ async fn generate(
 		}
 	}
 }
+/*
 async fn generate_shared(
 	config: &Config,
 	display_name: &str,
@@ -332,7 +334,7 @@ async fn generate_shared(
 		.await?,
 		owners: expectations.owners.clone(),
 	})
-}
+}*/
 
 async fn parse_public(
 	public: Option<String>,
@@ -625,10 +627,11 @@ impl Secret {
 					#[tabled(rename = "Owners")]
 					owners: String,
 				}
-				let mut table = vec![];
+				// let mut table = vec![];
 				for name in configured.iter().cloned() {
 					let config = config.clone();
 					let data = config.shared_secret(&name).expect("exists");
+					/*
 					let definition = config.shared_secret_definition(&name)?;
 					let expectations = definition.expectations()?;
 					let owners = data
@@ -645,8 +648,9 @@ impl Secret {
 						owners: owners.join(", "),
 						name,
 					})
+*/
 				}
-				info!("loaded\n{}", Table::new(table).to_string())
+				// info!("loaded\n{}", Table::new(table).to_string())
 			}
 			Secret::Edit {
 				name,

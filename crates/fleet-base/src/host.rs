@@ -23,7 +23,6 @@ use tracing::warn;
 use crate::{
 	command::MyCommand,
 	fleetdata::{FleetData, FleetSecretData, FleetSecretDistribution, FleetSecretDistributions},
-	secret::{HostSecretDefinition, SharedSecretDefinition},
 };
 
 pub struct FleetConfigInternals {
@@ -31,7 +30,7 @@ pub struct FleetConfigInternals {
 	pub directory: PathBuf,
 	/// builtins.currentSystem
 	pub local_system: String,
-	pub data: Mutex<FleetData>,
+	pub data: Arc<Mutex<FleetData>>,
 	pub nix_args: Vec<OsString>,
 	/// fleet_config.config
 	pub config_field: Value,
@@ -521,13 +520,6 @@ impl ConfigHost {
 		let secrets = nix_go!(nixos.secrets);
 		secrets.list_fields()
 	}
-	pub fn secret_definition(&self, name: &str) -> Result<HostSecretDefinition> {
-		let nixos = self.nixos_unchecked_config()?;
-		Ok(HostSecretDefinition(
-			self.name.clone(),
-			nix_go!(nixos.secrets[{ name }]),
-		))
-	}
 
 	/// Packages for this host, resolved with nixpkgs overlays
 	pub async fn pkgs(&self) -> Result<Value> {
@@ -665,12 +657,6 @@ impl Config {
 	pub fn shared_secret(&self, secret: &str) -> Option<FleetSecretDistributions> {
 		let data = self.data();
 		data.secrets.get(secret).cloned()
-	}
-	pub fn shared_secret_definition(&self, secret: &str) -> Result<SharedSecretDefinition> {
-		let config_field = &self.config_field;
-		Ok(SharedSecretDefinition(nix_go!(
-			config_field.sharedSecrets[{ secret }]
-		)))
 	}
 
 	// TODO: Should this be something modifiable from other processes?

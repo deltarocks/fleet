@@ -1,4 +1,9 @@
-use nix_eval::NativeFn;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use nix_eval::{NativeFn, Value};
+
+use crate::fleetdata::{FleetData, FleetSecrets};
 
 #[derive(thiserror::Error, Debug)]
 enum Error {}
@@ -15,30 +20,32 @@ trait SecretsBackend {
 	fn host_parts(&self, host: &str, name: &str) -> Parts;
 }
 
-struct FsSecretsBackend {
+struct FsSecretsBackend {}
 
-}
-
-pub fn init_primops() {
+pub fn init_primops(secrets: Arc<Mutex<FleetData>>) {
 	NativeFn::new(
-		c"fleet_ensure_secret",
+		c"fleet_ensure_host_secret",
 		c"Ensure secret existence for a host, regenerating it in case of some mismatch",
-		[
-			c"host",
-			c"secret",
-			c"expected_parts",
-			c"expected_encrypted_parts",
-			c"generator",
-		],
-		|[
-			host,
-			secret,
-			expected_parts,
-			expected_encrypted_parts,
-			generator,
-		]| { 
-
-			todo!()
+		[c"host", c"secret", c"generator"],
+		|[host, secret, generator]| {
+			todo!("ensure secret");
+			Ok(Value::new_attrs(HashMap::from_iter([(
+				"raw",
+				Value::new_str("rawData"),
+			)])))
+		},
+	)
+	.register();
+	NativeFn::new(
+		c"fleet_ensure_host_secret",
+		c"Ensure secret existence for a host, regenerating it in case of some mismatch",
+		[c"host", c"secret", c"generator"],
+		|[host, secret, generator]| {
+			todo!("ensure secret");
+			Ok(Value::new_attrs(HashMap::from_iter([(
+				"raw",
+				Value::new_str("rawData"),
+			)])))
 		},
 	)
 	.register();

@@ -6,5 +6,4 @@
   ./nixos.nix
   ./nixpkgs.nix
   ./secrets.nix
-  ./secrets-data.nix
 ]
