@@ -33,6 +33,8 @@ in
           # To use user-provided nixpkgs, we first need to extract wanted nixpkgs attribute,
           # to do that, evaluate all the modules with only needed option declared.
           bootstrapEval = lib.evalModules {
+            class = "fleet";
+            prefix = ["fleetConfiguration"];
             modules = [
               module
               {
@@ -50,6 +52,8 @@ in
           };
           bootstrapNixpkgs = bootstrapEval.config.nixpkgs.buildUsing;
           normalEval = bootstrapNixpkgs.lib.evalModules {
+            class = "fleet";
+            prefix = ["fleetConfiguration"];
             modules = (import ../modules/module-list.nix) ++ [
               module
               (
