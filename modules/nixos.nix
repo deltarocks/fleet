@@ -11,7 +11,6 @@ let
   inherit (lib.attrsets) mapAttrs;
   inherit (lib.options) mkOption;
   inherit (lib.types) deferredModule unspecified;
-  inherit (lib.modules) mkRemovedOptionModule;
   inherit (lib.strings) escapeNixIdentifier;
   inherit (fleetLib.options) mkHostsOption;
 
@@ -55,9 +54,6 @@ in
         };
       };
       config = {
-        # imports = [
-        #   (mkRemovedOptionModule ["nixosModules"] "replaced with hosts.*.nixos.imports.")
-        # ];
         nixos = let 
           inherit (hostArgs.config) system;
         in {
@@ -94,8 +90,5 @@ in
       };
     });
   };
-  imports = [
-    (mkRemovedOptionModule [ "nixosModules" ] "replaced with nixos.imports.")
-  ];
   config.nixos.imports = import ./nixos/module-list.nix;
 }

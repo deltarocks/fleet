@@ -2,7 +2,6 @@
   ./assertions.nix
   ./fleetLib.nix
   ./hosts.nix
-  ./meta.nix
   ./nixos.nix
   ./nixpkgs.nix
   ./secrets.nix
