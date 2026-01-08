@@ -1,15 +1,23 @@
 use std::time::Instant;
 
 use anyhow::bail;
+use serde::Deserialize;
 use tracing::{debug, warn};
 
 use crate::{Value, nix_go_json};
+
+#[derive(Deserialize, Debug)]
+struct Assertion {
+	assertion: bool,
+	message: String,
+}
 
 #[tracing::instrument(level = "info", skip(val))]
 pub async fn assert_warn(action: &str, val: &Value) -> anyhow::Result<()> {
 	let before_errors = Instant::now();
 	let errors: Vec<String> = nix_go_json!(val.errors);
-	debug!("errors evaluation took {:?}", before_errors.elapsed());
+	// let assertions: Vec<Assertion> = nix_go_json!(val.assertions);
+	debug!("errors evaluation took {:?} {errors:?} ", before_errors.elapsed());
 	if !errors.is_empty() {
 		bail!(
 			"failed with error{}{}",

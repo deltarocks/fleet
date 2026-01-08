@@ -114,7 +114,8 @@ impl Deploy {
 
 			set.spawn_local(
 				(async move {
-					let built = match build_task(config.clone(), hostname.clone(), "toplevel-fleet").await
+					let built = match build_task(config.clone(), hostname.clone(), "toplevel-fleet")
+						.await
 					{
 						Ok(path) => path,
 						Err(e) => {

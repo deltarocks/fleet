@@ -153,7 +153,7 @@ pub struct FleetSecretDistribution {
 	#[serde(flatten)]
 	pub secret: FleetSecretData,
 
-	#[serde(default, skip_serializing, alias="managed")]
+	#[serde(default, skip_serializing, alias = "managed")]
 	pub _deprecated_managed: bool,
 }
 

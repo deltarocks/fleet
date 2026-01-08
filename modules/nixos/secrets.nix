@@ -77,7 +77,7 @@ let
     }:
     let
       secretName = config._module.args.name;
-      literal = l: enum [l];
+      literal = l: enum [ l ];
     in
     {
       options = {
@@ -109,17 +109,16 @@ let
       config = {
         # C api is broken in regard to thunks
         # https://github.com/NixOS/nix/issues/12800
-        parts = let 
-          hostName = host._module.args.name;
-          generator = config.generator;
-        in builtins.deepSeq [
-          hostName
-          secretName
-          generator
-        ] (builtins.fleetEnsureHostSecret
-          hostName
-          secretName
-          generator);
+        parts =
+          let
+            hostName = host._module.args.name;
+            generator = config.generator;
+          in
+          builtins.deepSeq [
+            hostName
+            secretName
+            generator
+          ] (builtins.fleetEnsureHostSecret hostName secretName generator);
       };
     }
   );
@@ -136,14 +135,16 @@ in
     secrets = mkOption {
       type = attrsOf secretType;
       default = { };
-      apply = mapAttrs (_: secret: secret.parts // {definition = secret;});
+      apply = mapAttrs (_: secret: secret.parts // { definition = secret; });
       description = "Host-local secrets";
     };
     system.secretsData = mkOption {
       type = unspecified;
-      default = mapAttrs (_: s:
-        (removeAttrs s.definition ["generator"]) // {
-          parts = mapAttrs (_: part: removeAttrs part ["data"]) s.definition.parts;
+      default = mapAttrs (
+        _: s:
+        (removeAttrs s.definition [ "generator" ])
+        // {
+          parts = mapAttrs (_: part: removeAttrs part [ "data" ]) s.definition.parts;
         }
       ) config.secrets;
       description = "secrets.json contents";
@@ -152,13 +153,25 @@ in
   config = {
     environment.systemPackages = [ pkgs.fleet-install-secrets ];
 
-    assertions = mapAttrsToList (name: secret: let
-      hasSharedDefinition = fleetConfiguration.secrets ? name;
-    in {
-      assertion = (secret.definition.generator == "shared") == hasSharedDefinition && hasSharedDefinition -> (elem host._module.args.name fleetConfiguration.secrets.${name}.expectedOwners);
-      message = if hasSharedDefinition then"secret ${name} has host-specific secret generator, secrets with host-specific generators can not have shared generator in fleet configuration"
-      else "secret ${name} is declared as shared, for shared secret fleet configuration should include shared secret generator, and expectedOwners should contain this host";
-    }) config.secrets;
+    assertions = mapAttrsToList (
+      name: secret:
+      let
+        hasSharedDefinition = fleetConfiguration.secrets ? ${name};
+      in
+      {
+        assertion =
+          (secret.definition.generator == "shared") == hasSharedDefinition
+          && (
+            hasSharedDefinition
+            -> (elem host._module.args.name fleetConfiguration.secrets.${name}.expectedOwners)
+          );
+        message =
+          if hasSharedDefinition then
+            "secret ${name} has host-specific secret generator, secrets with host-specific generators can not have shared generator in fleet configuration"
+          else
+            "secret ${name} is declared as shared, for shared secret fleet configuration should include shared secret generator, and expectedOwners should contain this host";
+      }
+    ) config.secrets;
 
     systemd.services.fleet-install-secrets = mkIf useSysusers {
       wantedBy = [ "sysinit.target" ];

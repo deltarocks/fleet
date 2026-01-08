@@ -150,7 +150,10 @@ rec {
       );
 
     mkAskPass =
-      { prompt ? "Secret value", part ? "secret" }:
+      {
+        prompt ? "Secret value",
+        part ? "secret",
+      }:
       (
         {
           kdePackages,

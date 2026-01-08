@@ -632,23 +632,23 @@ impl Secret {
 					let config = config.clone();
 					let data = config.shared_secret(&name).expect("exists");
 					/*
-					let definition = config.shared_secret_definition(&name)?;
-					let expectations = definition.expectations()?;
-					let owners = data
-						.owners()
-						.map(|o| {
-							if expectations.owners.contains(o) {
-								o.green().to_string()
-							} else {
-								o.red().to_string()
-							}
-						})
-						.collect::<Vec<_>>();
-					table.push(SecretDisplay {
-						owners: owners.join(", "),
-						name,
-					})
-*/
+										let definition = config.shared_secret_definition(&name)?;
+										let expectations = definition.expectations()?;
+										let owners = data
+											.owners()
+											.map(|o| {
+												if expectations.owners.contains(o) {
+													o.green().to_string()
+												} else {
+													o.red().to_string()
+												}
+											})
+											.collect::<Vec<_>>();
+										table.push(SecretDisplay {
+											owners: owners.join(", "),
+											name,
+										})
+					*/
 				}
 				// info!("loaded\n{}", Table::new(table).to_string())
 			}

@@ -2,6 +2,7 @@
   pkgs,
   config,
   lib,
+  ...
 }:
 let
   inherit (lib.strings) optionalString;
