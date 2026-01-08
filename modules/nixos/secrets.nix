@@ -3,6 +3,7 @@
   fleetLib,
   config,
   pkgs,
+  host,
   fleetConfiguration,
   ...
 }:
@@ -13,7 +14,7 @@ let
     ;
   inherit (lib.stringsWithDeps) stringAfter;
   inherit (lib.options) mkOption literalExpression;
-  inherit (lib.lists) optional;
+  inherit (lib.lists) optional elem;
   inherit (lib.attrsets) mapAttrs mapAttrsToList;
   inherit (lib.modules) mkIf;
   inherit (lib.types)
@@ -109,7 +110,7 @@ let
         # C api is broken in regard to thunks
         # https://github.com/NixOS/nix/issues/12800
         parts = let 
-          hostName = sysConfig.networking.hostName;
+          hostName = host._module.args.name;
           generator = config.generator;
         in builtins.deepSeq [
           hostName
@@ -154,9 +155,9 @@ in
     assertions = mapAttrsToList (name: secret: let
       hasSharedDefinition = fleetConfiguration.secrets ? name;
     in {
-      assertion = (secret.definition.generator == "shared") == hasSharedDefinition;
+      assertion = (secret.definition.generator == "shared") == hasSharedDefinition && hasSharedDefinition -> (elem host._module.args.name fleetConfiguration.secrets.${name}.expectedOwners);
       message = if hasSharedDefinition then"secret ${name} has host-specific secret generator, secrets with host-specific generators can not have shared generator in fleet configuration"
-      else "secret ${name} is declared as shared, for shared secret fleet configuration should include shared secret generator";
+      else "secret ${name} is declared as shared, for shared secret fleet configuration should include shared secret generator, and expectedOwners should contain this host";
     }) config.secrets;
 
     systemd.services.fleet-install-secrets = mkIf useSysusers {

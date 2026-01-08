@@ -22,14 +22,10 @@ let
     {
       options = {
         expectedOwners = mkOption {
-          type = nullOr (listOf str);
+          type = listOf str;
           description = ''
             Specifies the list of hosts authorized to decrypt and access this shared secret.
-
-            When null, secret ownership is managed manually via fleet.nix and CLI.
-            Decrypted secrets will be stored at /run/secrets/$\{name} on authorized hosts.
           '';
-          default = null;
         };
         regenerateOnOwnerAdded = mkOption {
           type = bool;

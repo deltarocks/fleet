@@ -38,9 +38,8 @@ in
             let
               inherit (hostArgs.config) system;
             in
-            config.nixpkgs.buildUsing.lib.nixosSystem {
-              inherit system;
-              modules = [
+            config.nixpkgs.buildUsing.lib.evalModules {
+              modules = (import "${config.nixpkgs.buildUsing}/nixos/modules/module-list.nix") ++ [
                 (module // { key = "attr<host.nixos>"; })
                 (config.nixos // { key = "attr<fleet.nixos>"; })
               ];
@@ -57,9 +56,6 @@ in
                         "input is not a flake, perhaps flake = false was added to te input declaration?"
                     )
                 ) inputs;
-                self' = builtins.addErrorContext "while retrieving system-dependent attributes for a flake's own outputs" (
-                  _fleetFlakeRootConfig.perInput system self
-                );
               };
             };
         };
