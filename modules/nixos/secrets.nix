@@ -3,6 +3,7 @@
   fleetLib,
   config,
   pkgs,
+  fleetConfiguration,
   ...
 }:
 let
@@ -13,7 +14,7 @@ let
   inherit (lib.stringsWithDeps) stringAfter;
   inherit (lib.options) mkOption literalExpression;
   inherit (lib.lists) optional;
-  inherit (lib.attrsets) mapAttrs;
+  inherit (lib.attrsets) mapAttrs mapAttrsToList;
   inherit (lib.modules) mkIf;
   inherit (lib.types)
     submodule
@@ -23,6 +24,9 @@ let
     uniq
     functionTo
     package
+    bool
+    enum
+    either
     ;
   inherit (fleetLib.strings) decodeRawSecret;
 
@@ -72,6 +76,7 @@ let
     }:
     let
       secretName = config._module.args.name;
+      literal = l: enum [l];
     in
     {
       options = {
@@ -80,7 +85,7 @@ let
           description = "Definition of secret parts";
         };
         generator = mkOption {
-          type = uniq (functionTo package);
+          type = either (functionTo package) (literal "shared");
           description = "Derivation to evaluate for secret generation";
         };
         mode = mkOption {
@@ -145,6 +150,14 @@ in
   };
   config = {
     environment.systemPackages = [ pkgs.fleet-install-secrets ];
+
+    assertions = mapAttrsToList (name: secret: let
+      hasSharedDefinition = fleetConfiguration.secrets ? name;
+    in {
+      assertion = (secret.definition.generator == "shared") == hasSharedDefinition;
+      message = if hasSharedDefinition then"secret ${name} has host-specific secret generator, secrets with host-specific generators can not have shared generator in fleet configuration"
+      else "secret ${name} is declared as shared, for shared secret fleet configuration should include shared secret generator";
+    }) config.secrets;
 
     systemd.services.fleet-install-secrets = mkIf useSysusers {
       wantedBy = [ "sysinit.target" ];

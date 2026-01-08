@@ -21,7 +21,7 @@ in
   options = {
     nixos = mkOption {
       description = ''
-        Nixos configuration for all hosts.
+        Shared nixos configuration module for all hosts.
       '';
       type = deferredModule;
     };
@@ -76,6 +76,7 @@ in
             nixosHosts = mapAttrs (_: value: value.nixos_unchecked.config) config.hosts;
             hosts = config.hosts;
             host = hostArgs.config;
+            fleetConfiguration = config;
           };
         };
         nixos_unchecked = hostArgs.config.nixos.extendModules {
