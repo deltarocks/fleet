@@ -22,9 +22,9 @@ pub struct Deploy {
 
 #[derive(Parser, Clone)]
 pub struct BuildSystems {
-	/// Attribute to build. Systems are deployed from "toplevel" attr, well-known used attributes
+	/// Attribute to build. Systems are deployed from "toplevel-fleet" attr, well-known used attributes
 	/// are "sdImage"/"isoImage", and your configuration may include any other build attributes.
-	#[clap(long, default_value = "toplevel")]
+	#[clap(long, default_value = "toplevel-fleet")]
 	build_attr: String,
 }
 
@@ -114,7 +114,7 @@ impl Deploy {
 
 			set.spawn_local(
 				(async move {
-					let built = match build_task(config.clone(), hostname.clone(), "toplevel").await
+					let built = match build_task(config.clone(), hostname.clone(), "toplevel-fleet").await
 					{
 						Ok(path) => path,
 						Err(e) => {

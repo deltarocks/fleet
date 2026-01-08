@@ -4,4 +4,5 @@
   ./rollback.nix
   ./nix-sign.nix
   ./online.nix
+  ./top-level.nix
 ]
