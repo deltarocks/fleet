@@ -36,7 +36,6 @@ in
           apply =
             module:
             let
-              inherit (hostArgs.config) system;
               modulesPath = "${config.nixpkgs.buildUsing}/nixos/modules";
             in
             config.nixpkgs.buildUsing.lib.evalModules {
@@ -48,20 +47,6 @@ in
               ];
               specialArgs = {
                 inherit fleetLib inputs self modulesPath;
-                inputs' = mapAttrs (
-                  inputName: input:
-                  builtins.addErrorContext
-                    "while retrieving system-dependent attributes for input ${escapeNixIdentifier inputName}"
-                    (
-                      if input._type or null == "flake" then
-                        _fleetFlakeRootConfig.perInput system input
-                      else
-                        "input is not a flake, perhaps flake = false was added to te input declaration?"
-                    )
-                ) inputs;
-                self' = builtins.addErrorContext "while retrieving system-dependent attributes for a flake's own outputs" (
-                  _fleetFlakeRootConfig.perInput system self
-                );
               };
             };
         };
@@ -73,13 +58,31 @@ in
         # imports = [
         #   (mkRemovedOptionModule ["nixosModules"] "replaced with hosts.*.nixos.imports.")
         # ];
-        nixos = {
+        nixos = let 
+          inherit (hostArgs.config) system;
+        in {
           _module.args = {
             nixosHosts = mapAttrs (_: value: value.nixos_unchecked.config) config.hosts;
             hosts = config.hosts;
             host = hostArgs.config;
             fleetConfiguration = config;
+
+            inputs' = mapAttrs (
+              inputName: input:
+              builtins.addErrorContext
+                "while retrieving system-dependent attributes for input ${escapeNixIdentifier inputName}"
+                (
+                  if input._type or null == "flake" then
+                    _fleetFlakeRootConfig.perInput system input
+                  else
+                    "input is not a flake, perhaps flake = false was added to te input declaration?"
+                )
+            ) inputs;
+            self' = builtins.addErrorContext "while retrieving system-dependent attributes for a flake's own outputs" (
+              _fleetFlakeRootConfig.perInput system self
+            );
           };
+          nixpkgs.hostPlatform = system;
         };
         nixos_unchecked = hostArgs.config.nixos.extendModules {
           modules = [
