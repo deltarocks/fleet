@@ -421,3 +421,14 @@ impl FleetSecrets {
 		}
 	}
 }
+
+#[derive(Debug)]
+pub struct Expectations {
+	pub owners: BTreeSet<String>,
+	pub generation_data: serde_json::Value,
+	pub parts: BTreeMap<String, GeneratorPart>,
+}
+#[derive(Deserialize, Debug, Clone)]
+pub struct GeneratorPart {
+	pub encrypted: bool,
+}

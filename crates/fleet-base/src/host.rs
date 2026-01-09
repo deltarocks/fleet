@@ -471,10 +471,13 @@ impl ConfigHost {
 		cmd.run().await
 	}
 }
+
+struct HostSecretDefinition(Value);
+
 impl ConfigHost {
 	// TOCTOU is possible here in case if config is changed, but this case is not handled anywhere anyway,
 	// assuming getting tags always returns the same value.
-	pub async fn tags(&self) -> Result<Vec<String>> {
+	pub fn tags(&self) -> Result<Vec<String>> {
 		if let Some(v) = self.groups.get() {
 			return Ok(v.clone());
 		}
@@ -487,7 +490,7 @@ impl ConfigHost {
 
 		Ok(tags)
 	}
-	pub async fn nixos_config(&self) -> Result<Value> {
+	pub fn nixos_config(&self) -> Result<Value> {
 		if let Some(v) = self.nixos_config.get() {
 			return Ok(v.clone());
 		}
@@ -495,7 +498,7 @@ impl ConfigHost {
 			bail!("local host has no nixos_config");
 		};
 		let nixos_config = nix_go!(host_config.nixos.config);
-		assert_warn("nixos config evaluation", &nixos_config).await?;
+		assert_warn("nixos config evaluation", &nixos_config)?;
 
 		let _ = self.nixos_config.set(nixos_config.clone());
 
@@ -522,7 +525,7 @@ impl ConfigHost {
 	}
 
 	/// Packages for this host, resolved with nixpkgs overlays
-	pub async fn pkgs(&self) -> Result<Value> {
+	pub fn pkgs(&self) -> Result<Value> {
 		if let Some(value) = &self.pkgs_override {
 			return Ok(value.clone());
 		}
@@ -534,17 +537,29 @@ impl ConfigHost {
 	}
 }
 
+pub struct SharedSecretDefinition(Value);
+impl SharedSecretDefinition {
+	pub fn expected_owners(&self) -> Result<BTreeSet<String>> {
+		let secret = &self.0;
+		Ok(nix_go_json!(secret.expectedOwners))
+	}
+	pub fn generator(&self) -> Result<Value> {
+		let secret = &self.0;
+		Ok(nix_go!(secret.generator))
+	}
+}
+
 impl Config {
-	pub async fn tagged_hostnames(&self, tag: &str) -> Result<Vec<String>> {
+	pub fn tagged_hostnames(&self, tag: &str) -> Result<Vec<String>> {
 		let config = &self.config_field;
 		let tagged: Vec<String> = nix_go_json!(config.taggedWith[{ tag }]);
 		Ok(tagged)
 	}
-	pub async fn expand_owner_set(&self, owners: Vec<String>) -> Result<BTreeSet<String>> {
+	pub fn expand_owner_set(&self, owners: Vec<String>) -> Result<BTreeSet<String>> {
 		let mut out = BTreeSet::new();
 		for owner in owners {
 			if let Some(tag) = owner.strip_prefix('@') {
-				let hosts = self.tagged_hostnames(tag).await?;
+				let hosts = self.tagged_hostnames(tag)?;
 				out.extend(hosts);
 			} else {
 				out.insert(owner);
@@ -574,7 +589,7 @@ impl Config {
 		}
 	}
 
-	pub async fn host(&self, name: &str) -> Result<ConfigHost> {
+	pub fn host(&self, name: &str) -> Result<ConfigHost> {
 		let config = &self.config_field;
 		let host_config = nix_go!(config.hosts[{ name }]);
 
@@ -595,23 +610,23 @@ impl Config {
 			legacy_ssh_store: OnceCell::new(),
 		})
 	}
-	pub async fn list_hosts(&self) -> Result<Vec<ConfigHost>> {
+	pub fn list_hosts(&self) -> Result<Vec<ConfigHost>> {
 		let config = &self.config_field;
 		let names = nix_go!(config.hosts).list_fields()?;
 		let mut out = vec![];
 		for name in names {
-			out.push(self.host(&name).await?);
+			out.push(self.host(&name)?);
 		}
 		Ok(out)
 	}
 	// TODO: Replace usages with .host().nixos_config
-	pub async fn system_config(&self, host: &str) -> Result<Value> {
+	pub fn system_config(&self, host: &str) -> Result<Value> {
 		let fleet_field = &self.config_field;
 		Ok(nix_go!(fleet_field.hosts[{ host }].nixos.config))
 	}
 
 	/// Shared secrets configured in fleet.nix or in flake
-	pub async fn list_configured_shared(&self) -> Result<Vec<String>> {
+	pub fn list_configured_shared(&self) -> Result<Vec<String>> {
 		let config_field = &self.config_field;
 		nix_go!(config_field.sharedSecrets).list_fields()
 	}
@@ -657,6 +672,17 @@ impl Config {
 	pub fn shared_secret(&self, secret: &str) -> Option<FleetSecretDistributions> {
 		let data = self.data();
 		data.secrets.get(secret).cloned()
+	}
+
+	pub fn secret_definition(&self, secret: &str) -> Result<Option<SharedSecretDefinition>> {
+		let config = &self.config_field;
+		let shared_secrets = nix_go!(config.secrets);
+		if !shared_secrets.has_field(secret)? {
+			return Ok(None);
+		}
+		Ok(Some(SharedSecretDefinition(nix_go!(
+			shared_secrets[secret]
+		))))
 	}
 
 	// TODO: Should this be something modifiable from other processes?

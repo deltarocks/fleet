@@ -89,6 +89,7 @@ in
                 # If set - script will be run on remote machine, otherwise it will be run with fleet project in CWD
                 # (Some secrets-encryption-in-git/managed PKI solution is expected)
                 impureOn ? null,
+                generationData ? null,
                 parts,
               }:
               (prev.writeShellScript "impureGenerator.sh" ''
@@ -117,7 +118,7 @@ in
               '').overrideAttrs
                 (old: {
                   passthru = {
-                    inherit impureOn parts;
+                    inherit impureOn parts generationData;
                     generatorKind = "impure";
                   };
                 });

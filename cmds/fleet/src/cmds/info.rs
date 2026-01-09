@@ -35,7 +35,7 @@ impl Info {
 		let mut data = Vec::new();
 		match self.cmd {
 			InfoCmd::ListHosts { ref tagged } => {
-				'host: for host in config.list_hosts().await? {
+				'host: for host in config.list_hosts()? {
 					if !tagged.is_empty() {
 						let config = &config.config_field;
 						let host_name = &host.name;
@@ -59,7 +59,7 @@ impl Info {
 					"at leas one of --external or --internal must be set"
 				);
 				let mut out = <BTreeSet<String>>::new();
-				let host = config.system_config(&host).await?;
+				let host = config.system_config(&host)?;
 				if external {
 					let data: Vec<String> = nix_go_json!(host.network.externalIps);
 					out.extend(data);

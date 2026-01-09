@@ -104,20 +104,20 @@ pub struct FleetOpts {
 }
 
 impl FleetOpts {
-	pub async fn filter_skipped(
+	pub fn filter_skipped(
 		&self,
 		hosts: impl IntoIterator<Item = ConfigHost>,
 	) -> Result<Vec<ConfigHost>> {
 		let mut out = Vec::new();
 		for host in hosts {
-			if self.should_skip(&host).await? {
+			if self.should_skip(&host)? {
 				continue;
 			}
 			out.push(host);
 		}
 		Ok(out)
 	}
-	pub async fn should_skip(&self, host: &ConfigHost) -> Result<bool> {
+	pub fn should_skip(&self, host: &ConfigHost) -> Result<bool> {
 		if self.skip.iter().any(|h| h as &str == host.name) {
 			return Ok(true);
 		}
@@ -137,7 +137,7 @@ impl FleetOpts {
 			}
 		}
 		if have_group_matches {
-			let host_tags = host.tags().await?;
+			let host_tags = host.tags()?;
 			for item in self.only.iter() {
 				match item {
 					HostItem::Tag { name, .. } if host_tags.contains(name) => {
@@ -149,15 +149,15 @@ impl FleetOpts {
 		}
 		Ok(true)
 	}
-	pub async fn action_attr<T: FromStr>(&self, host: &ConfigHost, attr: &str) -> Result<Option<T>>
+	pub fn action_attr<T: FromStr>(&self, host: &ConfigHost, attr: &str) -> Result<Option<T>>
 	where
 		T::Err: Sync,
 		anyhow::Error: From<T::Err>,
 	{
-		let str = self.action_attr_str(host, attr).await?;
+		let str = self.action_attr_str(host, attr)?;
 		Ok(str.map(|v| T::from_str(&v)).transpose()?)
 	}
-	pub async fn action_attr_str(&self, host: &ConfigHost, attr: &str) -> Result<Option<String>> {
+	pub fn action_attr_str(&self, host: &ConfigHost, attr: &str) -> Result<Option<String>> {
 		if self.only.is_empty() {
 			return Ok(None);
 		}
@@ -176,7 +176,7 @@ impl FleetOpts {
 			}
 		}
 		if have_group_matches {
-			let host_tags = host.tags().await?;
+			let host_tags = host.tags()?;
 			for item in self.only.iter() {
 				match item {
 					HostItem::Tag { name, attrs }
@@ -195,7 +195,7 @@ impl FleetOpts {
 	}
 
 	// TODO: Config should be detached from opts.
-	pub async fn build(&self, nix_args: Vec<OsString>, assert: bool) -> Result<Config> {
+	pub fn build(&self, nix_args: Vec<OsString>, assert: bool) -> Result<Config> {
 		let cwd = current_dir()?;
 		let mut directory = cwd.clone();
 		let mut fleet_data_path = directory.join("fleet.nix");
@@ -248,7 +248,6 @@ impl FleetOpts {
 
 		if assert {
 			assert_warn("fleet config evaluation", &config_field)
-				.await
 				.context("failed to verify assertions")?;
 		}
 

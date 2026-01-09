@@ -75,7 +75,7 @@ pub async fn list_all_generations(host: &ConfigHost, config: &Config) -> Vec<Gen
 
 impl RollbackSingle {
 	pub(crate) async fn run(&self, config: &Config, _opts: &FleetOpts) -> Result<()> {
-		let host = config.host(&self.machine).await?;
+		let host = config.host(&self.machine)?;
 		match &self.action {
 			RollbackAction::ListTargets => {
 				let generations = list_all_generations(&host, config).await;

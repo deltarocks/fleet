@@ -160,7 +160,7 @@ rec {
           mkImpureSecretGenerator,
         }:
         mkImpureSecretGenerator {
-          # TODO: Escape prompt?
+          # TODO: Escape prompt/part (preferrably just use env) to prevent shell injection
           script = ''
             ${kdePackages.kdialog}/bin/kdialog --inputbox "${prompt}" | gh private -o $out/${part}
           '';

@@ -1,24 +1,16 @@
 use std::{
-	collections::{BTreeMap, BTreeSet, HashSet},
-	io::{self, Read, Write, stdin, stdout},
+	collections::{BTreeSet, HashSet},
+	io::{Read, Write, stdin, stdout},
 	path::PathBuf,
 };
 
-use anyhow::{Context, Result, anyhow, bail, ensure};
-use chrono::{DateTime, Utc};
+use anyhow::{Context, Result, bail, ensure};
 use clap::Parser;
-use fleet_base::{
-	fleetdata::{FleetSecretData, FleetSecretDistribution, FleetSecretPart, encrypt_secret_data},
-	host::Config,
-	opts::FleetOpts,
-	secret::{Expectations, RegenerationReason, secret_needs_regeneration},
-};
+use fleet_base::{host::Config, opts::FleetOpts};
 use fleet_shared::SecretData;
-use nix_eval::{NixType, Value, nix_go, nix_go_json};
-use serde::Deserialize;
-use tabled::{Table, Tabled};
-use tokio::{fs::read, task::spawn_blocking};
-use tracing::{Instrument, error, info, info_span, warn};
+use tabled::Tabled;
+use tokio::fs::read;
+use tracing::{info, info_span, warn};
 
 #[derive(Parser)]
 pub enum Secret {
@@ -145,13 +137,7 @@ async fn maybe_regenerate_shared_secret(
 }
 */
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-enum GeneratorKind {
-	Impure,
-	Pure,
-}
-
+/*
 async fn generate_pure(
 	_config: &Config,
 	_display_name: &str,
@@ -315,6 +301,7 @@ async fn generate(
 		}
 	}
 }
+*/
 /*
 async fn generate_shared(
 	config: &Config,
@@ -421,8 +408,8 @@ impl Secret {
 				todo!("part of fleet-pusher")
 			}
 			Secret::ForceKeys => {
-				for host in config.list_hosts().await? {
-					if opts.should_skip(&host).await? {
+				for host in config.list_hosts()? {
+					if opts.should_skip(&host)? {
 						continue;
 					}
 					config.key(&host.name).await?;
@@ -467,7 +454,7 @@ impl Secret {
 					let Some(identity_holder) = identity_holder else {
 						bail!("no available holder found");
 					};
-					let host = config.host(identity_holder).await?;
+					let host = config.host(identity_holder)?;
 					host.decrypt(part.raw.clone()).await?
 				} else {
 					part.raw.data.clone()
@@ -619,7 +606,7 @@ impl Secret {
 			}
 			Secret::List {} => {
 				let _span = info_span!("loading secrets").entered();
-				let configured = config.list_configured_shared().await?;
+				let configured = config.list_configured_shared()?;
 				#[derive(Tabled)]
 				struct SecretDisplay {
 					#[tabled(rename = "Name")]
@@ -662,7 +649,7 @@ impl Secret {
 					.host_secret(&machine, &name)
 					.context("secret not found")?;
 				if let Some(data) = secret.secret.parts.get(&part) {
-					let host = config.host(&machine).await?;
+					let host = config.host(&machine)?;
 					let secret = host.decrypt(data.raw.clone()).await?;
 					String::from_utf8(secret).context("secret is not utf8")?
 				} else if add {

@@ -12,10 +12,10 @@ impl Config {
 	pub fn cached_key(&self, host: &str) -> Option<String> {
 		let data = self.data();
 		let key = data.hosts.get(host).map(|h| &h.encryption_key);
-		if let Some(key) = key {
-			if key.is_empty() {
-				return None;
-			}
+		if let Some(key) = key
+			&& key.is_empty()
+		{
+			return None;
 		}
 		key.cloned()
 	}
@@ -30,7 +30,7 @@ impl Config {
 			Ok(key)
 		} else {
 			warn!("Loading key for {}", host);
-			let host = self.host(host).await?;
+			let host = self.host(host)?;
 			let mut cmd = host.cmd("cat").await?;
 			cmd.arg("/etc/ssh/ssh_host_ed25519_key.pub");
 			let key = cmd.run_string().await?;
@@ -47,7 +47,7 @@ impl Config {
 	}
 
 	pub async fn recipients(&self, hosts: Vec<String>) -> Result<Vec<Box<dyn Recipient>>> {
-		let hosts = self.expand_owner_set(hosts).await?;
+		let hosts = self.expand_owner_set(hosts)?;
 		futures::stream::iter(hosts.iter())
 			.then(|m| self.recipient(m.as_ref()))
 			.try_collect::<Vec<_>>()
@@ -57,12 +57,7 @@ impl Config {
 	#[allow(dead_code)]
 	pub async fn orphaned_data(&self) -> Result<Vec<String>> {
 		let mut out = Vec::new();
-		let host_names = self
-			.list_hosts()
-			.await?
-			.into_iter()
-			.map(|h| h.name)
-			.collect_vec();
+		let host_names = self.list_hosts()?.into_iter().map(|h| h.name).collect_vec();
 		for hostname in self
 			.data()
 			.hosts

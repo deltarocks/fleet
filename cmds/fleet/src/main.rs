@@ -216,13 +216,10 @@ async fn main_real(opts: RootOpts) -> Result<()> {
 		.map(|a| extra_args::parse_os(&a))
 		.transpose()?
 		.unwrap_or_default();
-	let config = opts
-		.fleet_opts
-		.build(
-			nix_args,
-			matches!(opts.command, Opts::Deploy(_) | Opts::BuildSystems(_)),
-		)
-		.await?;
+	let config = opts.fleet_opts.build(
+		nix_args,
+		matches!(opts.command, Opts::Deploy(_) | Opts::BuildSystems(_)),
+	)?;
 
 	match run_command(&config, opts.fleet_opts, opts.command).await {
 		Ok(()) => {

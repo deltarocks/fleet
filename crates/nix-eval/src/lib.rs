@@ -731,6 +731,10 @@ impl Value {
 	}
 
 	pub fn has_field(&self, field: &str) -> Result<bool> {
+		if !matches!(self.type_of(), NixType::Attrs) {
+			bail!("invalid type: expected attrs");
+		}
+
 		let f = init_field_name(field);
 		with_default_context(|c, es| unsafe { has_attr_byname(c, self.0, es, f.as_ptr().cast()) })
 	}
@@ -880,6 +884,12 @@ impl Value {
 	}
 	pub fn is_null(&self) -> bool {
 		matches!(self.type_of(), NixType::Null)
+	}
+	pub fn is_string(&self) -> bool {
+		matches!(self.type_of(), NixType::String)
+	}
+	pub fn is_attrs(&self) -> bool {
+		matches!(self.type_of(), NixType::Attrs)
 	}
 }
 

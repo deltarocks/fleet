@@ -30,9 +30,9 @@ pub struct BuildSystems {
 
 async fn build_task(config: Config, hostname: String, build_attr: &str) -> Result<PathBuf> {
 	info!("building");
-	let host = config.host(&hostname).await?;
+	let host = config.host(&hostname)?;
 	// let action = Action::from(self.subcommand.clone());
-	let nixos = host.nixos_config().await?;
+	let nixos = host.nixos_config()?;
 	let drv = nix_go!(nixos.system.build[{ build_attr }]);
 	let out_output = spawn_blocking(move || drv.build("out"))
 		.await
@@ -59,7 +59,7 @@ async fn build_task(config: Config, hostname: String, build_attr: &str) -> Resul
 
 impl BuildSystems {
 	pub async fn run(self, config: &Config, opts: &FleetOpts) -> Result<()> {
-		let hosts = opts.filter_skipped(config.list_hosts().await?).await?;
+		let hosts = opts.filter_skipped(config.list_hosts()?)?;
 		let set = LocalSet::new();
 		let build_attr = self.build_attr.clone();
 		for host in hosts {
@@ -95,20 +95,20 @@ impl BuildSystems {
 
 impl Deploy {
 	pub async fn run(self, config: &Config, opts: &FleetOpts) -> Result<()> {
-		let hosts = opts.filter_skipped(config.list_hosts().await?).await?;
+		let hosts = opts.filter_skipped(config.list_hosts()?)?;
 		let set = LocalSet::new();
 		for host in hosts.into_iter() {
 			let config = config.clone();
 			let span = info_span!("deploy", host = field::display(&host.name));
 			let hostname = host.name.clone();
 			let opts = opts.clone();
-			if let Some(deploy_kind) = opts.action_attr::<DeployKind>(&host, "deploy_kind").await? {
+			if let Some(deploy_kind) = opts.action_attr::<DeployKind>(&host, "deploy_kind")? {
 				host.set_deploy_kind(deploy_kind);
 			};
-			if let Some(destination) = opts.action_attr::<String>(&host, "dest").await? {
+			if let Some(destination) = opts.action_attr::<String>(&host, "dest")? {
 				host.set_session_destination(destination);
 			};
-			if let Some(legacy) = opts.action_attr::<bool>(&host, "legacy_ssh_store").await? {
+			if let Some(legacy) = opts.action_attr::<bool>(&host, "legacy_ssh_store")? {
 				host.set_legacy_ssh_store(legacy);
 			};
 
@@ -153,7 +153,7 @@ impl Deploy {
 						self.action,
 						&host,
 						remote_path,
-						match opts.action_attr(&host, "specialisation").await {
+						match opts.action_attr(&host, "specialisation") {
 							Ok(v) => v,
 							_ => {
 								error!("unreachable? failed to get specialization");
