@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
 use std::ptr::{null, null_mut};
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock, OnceLock};
 use std::{array, fmt, slice};
 use std::{collections::HashMap, path::PathBuf};
 
@@ -10,9 +10,10 @@ use anyhow::{Context, anyhow, bail};
 use itertools::Itertools;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use std::mem::transmute;
 
 pub use anyhow::Result;
-use tracing::{info, instrument, warn};
+use tracing::{Instrument, info, instrument, warn};
 
 use self::logging::{ErrorInfoBuilder, nix_logging_cxx};
 use self::nix_cxx::set_fetcher_setting;
@@ -172,8 +173,15 @@ impl Drop for ThreadRegisterGuard {
 #[repr(transparent)]
 pub struct NixContext(*mut c_context);
 impl NixContext {
-	pub fn set_err(&mut self, err: NixErrorKind, msg: &CStr) {
+	pub fn set_err_raw(&mut self, err: NixErrorKind, msg: &CStr) {
 		unsafe { set_err_msg(self.0, err as c_int, msg.as_ptr()) };
+	}
+	pub fn set_err(&mut self, err: anyhow::Error) {
+		let mut fmt = format!("{err:?}").replace("\0", "\\0");
+		self.set_err_raw(
+			NixErrorKind::Generic,
+			&CString::new(fmt).expect("NUL bytes were just replaced"),
+		);
 	}
 	pub fn new() -> Self {
 		let ctx = unsafe { c_context_create() };
@@ -931,6 +939,8 @@ impl Drop for Value {
 	}
 }
 
+static TOKIO_FOR_NIX: OnceLock<Arc<tokio::runtime::Runtime>> = OnceLock::new();
+
 pub fn init_libraries() {
 	unsafe { GC_allow_register_threads() };
 
@@ -945,37 +955,33 @@ pub fn init_libraries() {
 	nix_logging_cxx::apply_tracing_logger();
 }
 
+pub fn init_tokio_for_nix(tokio: Arc<tokio::runtime::Runtime>) {
+	TOKIO_FOR_NIX
+		.set(tokio)
+		.expect("tokio for nix should only be initialized once");
+}
+
+pub fn await_in_nix<F: Send + 'static>(f: impl Future<Output = F> + Send + 'static) -> F {
+	// It should be possible to do Handle::current(), but some of the planned features don't work well with that
+	let runtime = TOKIO_FOR_NIX
+		.get()
+		.expect("init_tokio_for_nix was not called");
+	std::thread::spawn(move || runtime.block_on(f)).join().expect("await_in_nix inner thread panicked")
+}
+
 unsafe extern "C" fn nix_primop_closure_adapter<const N: usize>(
 	user_data: *mut c_void,
-	context: *mut c_context,
+	mut context: *mut c_context,
 	state: *mut nix_raw::EvalState,
 	args: *mut *mut value,
 	ret: *mut value,
 ) {
 	let user_closure: &UserClosure<N> = unsafe { &*user_data.cast_const().cast() };
-	let mut e = None;
 	let args: [&Value; N] = array::from_fn(|i| {
 		let v: &mut Value = unsafe { &mut *args.add(i).cast() };
-
-		info!("forcing arg");
-		if matches!(v.type_of(), NixType::Thunk)
-			&& let Err(err) = v.force(state)
-		{
-			e = Some(err);
-		};
 		v as &Value
 	});
-	info!("args forced");
-	let ctx: &mut NixContext = unsafe { &mut *context.cast() };
-
-	if let Some(e) = e {
-		warn!("set err = {e}");
-		unsafe { init_int(context, ret, 0) };
-		return ctx.set_err(
-			NixErrorKind::Unknown,
-			&CString::new(e.to_string()).expect("forcing argument value failed"),
-		);
-	}
+	let ctx: &mut NixContext = unsafe { transmute(&mut context) };
 
 	let state: &EvalState = unsafe { std::mem::transmute(&state) };
 
@@ -984,12 +990,7 @@ unsafe extern "C" fn nix_primop_closure_adapter<const N: usize>(
 			unsafe { copy_value(context, ret, v.0) };
 		}
 		Err(e) => {
-			unsafe { init_int(context, ret, 0) };
-			warn!("set err = {e:#?}");
-			ctx.set_err(
-				NixErrorKind::Unknown,
-				&CString::new(e.to_string()).expect("error should not contain internal nuls"),
-			);
+			ctx.set_err(e);
 		}
 	}
 }

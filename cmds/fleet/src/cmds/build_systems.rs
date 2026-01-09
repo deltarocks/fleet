@@ -7,8 +7,9 @@ use fleet_base::{
 	host::{Config, DeployKind, GenerationStorage},
 	opts::FleetOpts,
 };
+use futures::{StreamExt as _, stream::FuturesUnordered};
 use nix_eval::nix_go;
-use tokio::task::{LocalSet, spawn_blocking};
+use tokio::task::spawn_blocking;
 use tracing::{Instrument, error, field, info, info_span, warn};
 
 #[derive(Parser)]
@@ -47,7 +48,7 @@ async fn build_task(config: Config, hostname: String, build_attr: &str) -> Resul
 				"--profile",
 				format!(
 					"/nix/var/nix/profiles/{}-{hostname}",
-					config.data().gc_root_prefix
+					config.data.gc_root_prefix
 				),
 			)
 			.arg(&out_output);
@@ -60,14 +61,14 @@ async fn build_task(config: Config, hostname: String, build_attr: &str) -> Resul
 impl BuildSystems {
 	pub async fn run(self, config: &Config, opts: &FleetOpts) -> Result<()> {
 		let hosts = opts.filter_skipped(config.list_hosts()?)?;
-		let set = LocalSet::new();
+		let mut tasks = FuturesUnordered::new();
 		let build_attr = self.build_attr.clone();
 		for host in hosts {
 			let config = config.clone();
 			let span = info_span!("build", host = field::display(&host.name));
 			let hostname = host.name;
 			let build_attr = build_attr.clone();
-			set.spawn_local(
+			tasks.push(
 				(async move {
 					let built = match build_task(config, hostname.clone(), &build_attr).await {
 						Ok(path) => path,
@@ -88,7 +89,7 @@ impl BuildSystems {
 				.instrument(span),
 			);
 		}
-		set.await;
+		for _task in tasks.next().await {}
 		Ok(())
 	}
 }
@@ -96,7 +97,7 @@ impl BuildSystems {
 impl Deploy {
 	pub async fn run(self, config: &Config, opts: &FleetOpts) -> Result<()> {
 		let hosts = opts.filter_skipped(config.list_hosts()?)?;
-		let set = LocalSet::new();
+		let mut tasks = FuturesUnordered::new();
 		for host in hosts.into_iter() {
 			let config = config.clone();
 			let span = info_span!("deploy", host = field::display(&host.name));
@@ -112,7 +113,7 @@ impl Deploy {
 				host.set_legacy_ssh_store(legacy);
 			};
 
-			set.spawn_local(
+			tasks.push(
 				(async move {
 					let built = match build_task(config.clone(), hostname.clone(), "toplevel-fleet")
 						.await
@@ -170,7 +171,7 @@ impl Deploy {
 				.instrument(span),
 			);
 		}
-		set.await;
+		for _task in tasks.next().await {}
 		Ok(())
 	}
 }

@@ -72,9 +72,9 @@ impl Tf {
 			let tf_data: TfData = serde_json::from_slice(&data.stdout)
 				.context("failed to parse terraform fleet output")?;
 
-			let mut data = config.data();
 			debug!("synchronized done = {tf_data:?}");
-			data.extra.insert(
+			let mut extra = config.data.extra.write().expect("no poisoning");
+			extra.insert(
 				"terraformHosts".to_owned(),
 				serde_json::to_value(tf_data.hosts).expect("should be valid extra"),
 			);

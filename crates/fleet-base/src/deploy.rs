@@ -78,7 +78,7 @@ pub async fn deploy_task(
 	// unit name conflict in systemd-run
 	// This code is tied to rollback.nix
 	if !disable_rollback && action.should_create_rollback_marker() {
-		let _span = info_span!("preparing").entered();
+		// let _span = info_span!("preparing").entered();
 		info!("preparing for rollback");
 		let generation = get_current_generation(host).await?;
 		info!(
@@ -179,7 +179,7 @@ pub async fn deploy_task(
 		// FIXME: Connection might be disconnected after activation run
 
 		if action.should_activate() && !failed {
-			let _span = info_span!("activating").entered();
+			// let _span = info_span!("activating").entered();
 			info!("executing activation script");
 			let specialised = if let Some(specialisation) = specialisation {
 				let mut specialised = built.join("specialisation");

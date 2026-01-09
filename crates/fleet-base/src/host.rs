@@ -1,6 +1,5 @@
 use std::{
-	cell::OnceCell,
-	collections::BTreeSet,
+	collections::{BTreeMap, BTreeSet},
 	ffi::{OsStr, OsString},
 	fmt::Display,
 	io::Write,
@@ -11,6 +10,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
+use chrono::{DateTime, Utc};
 use fleet_shared::SecretData;
 use nix_eval::{Value, nix_go, nix_go_json, util::assert_warn};
 use openssh::{ControlPersist, SessionBuilder};
@@ -22,15 +22,20 @@ use tracing::warn;
 
 use crate::{
 	command::MyCommand,
-	fleetdata::{FleetData, FleetSecretData, FleetSecretDistribution, FleetSecretDistributions},
+	fleetdata::{
+		FleetData, FleetSecretData, FleetSecretDistribution, FleetSecretPart, SecretOwner,
+	},
 };
 
 pub struct FleetConfigInternals {
+	pub prefer_identities: BTreeSet<SecretOwner>,
+	pub now: DateTime<Utc>,
+
 	/// Fleet project directory, containing fleet.nix file.
 	pub directory: PathBuf,
 	/// builtins.currentSystem
 	pub local_system: String,
-	pub data: Arc<Mutex<FleetData>>,
+	pub data: Arc<FleetData>,
 	pub nix_args: Vec<OsString>,
 	/// fleet_config.config
 	pub config_field: Value,
@@ -96,16 +101,16 @@ impl FromStr for DeployKind {
 pub struct ConfigHost {
 	config: Config,
 	pub name: String,
-	groups: OnceCell<Vec<String>>,
+	groups: OnceLock<Vec<String>>,
 
 	// TODO: Both of those values are taken from host opts, there should be a cleaner way to specify it
-	deploy_kind: OnceCell<DeployKind>,
-	session_destination: OnceCell<String>,
-	legacy_ssh_store: OnceCell<bool>,
+	deploy_kind: OnceLock<DeployKind>,
+	session_destination: OnceLock<String>,
+	legacy_ssh_store: OnceLock<bool>,
 
 	pub host_config: Option<Value>,
-	pub nixos_config: OnceCell<Value>,
-	pub nixos_unchecked_config: OnceCell<Value>,
+	pub nixos_config: OnceLock<Value>,
+	pub nixos_unchecked_config: OnceLock<Value>,
 	pub pkgs_override: Option<Value>,
 
 	// TODO: Move command helpers away with connectivity refactor
@@ -397,7 +402,38 @@ impl ConfigHost {
 		ensure!(!data.encrypted, "secret came out encrypted");
 		Ok(data.data)
 	}
-	pub async fn reencrypt(&self, data: SecretData, targets: Vec<String>) -> Result<SecretData> {
+	pub async fn reencrypt_distribution(
+		&self,
+		data: &FleetSecretDistribution,
+		targets: BTreeSet<SecretOwner>,
+		now: DateTime<Utc>,
+	) -> Result<FleetSecretDistribution> {
+		let mut parts = BTreeMap::new();
+		for (part_name, part) in &data.secret.parts {
+			parts.insert(
+				part_name.clone(),
+				if part.raw.encrypted {
+					FleetSecretPart {
+						raw: self.reencrypt(part.raw.clone(), targets.clone()).await?,
+					}
+				} else {
+					part.clone()
+				},
+			);
+		}
+		let secret = FleetSecretData {
+			created_at: data.secret.created_at,
+			expires_at: data.secret.expires_at,
+			generation_data: data.secret.generation_data.clone(),
+			parts,
+		};
+		Ok(FleetSecretDistribution::new(targets, secret, now))
+	}
+	pub async fn reencrypt(
+		&self,
+		data: SecretData,
+		targets: BTreeSet<SecretOwner>,
+	) -> Result<SecretData> {
 		ensure!(data.encrypted, "secret is not encrypted");
 		let mut cmd = self.cmd("fleet-install-secrets").await?;
 		cmd.arg("reencrypt").eqarg("--secret", data.to_string());
@@ -537,11 +573,24 @@ impl ConfigHost {
 	}
 }
 
+#[derive(Clone)]
 pub struct SharedSecretDefinition(Value);
 impl SharedSecretDefinition {
-	pub fn expected_owners(&self) -> Result<BTreeSet<String>> {
+	pub fn expected_owners(&self) -> Result<BTreeSet<SecretOwner>> {
 		let secret = &self.0;
 		Ok(nix_go_json!(secret.expectedOwners))
+	}
+	pub fn allow_different(&self) -> Result<bool> {
+		let secret = &self.0;
+		Ok(nix_go_json!(secret.allowDifferent))
+	}
+	pub fn regenerate_on_owner_added(&self) -> Result<bool> {
+		let secret = &self.0;
+		Ok(nix_go_json!(secret.regenerateOnOwnerAdded))
+	}
+	pub fn regenerate_on_owner_removed(&self) -> Result<bool> {
+		let secret = &self.0;
+		Ok(nix_go_json!(secret.regenerateOnOwnerRemoved))
 	}
 	pub fn generator(&self) -> Result<Value> {
 		let secret = &self.0;
@@ -572,10 +621,10 @@ impl Config {
 			config: self.clone(),
 			name: "<virtual localhost>".to_owned(),
 			host_config: None,
-			nixos_config: OnceCell::new(),
-			nixos_unchecked_config: OnceCell::new(),
+			nixos_config: OnceLock::new(),
+			nixos_unchecked_config: OnceLock::new(),
 			groups: {
-				let cell = OnceCell::new();
+				let cell = OnceLock::new();
 				let _ = cell.set(vec![]);
 				cell
 			},
@@ -583,9 +632,9 @@ impl Config {
 
 			local: true,
 			session: OnceLock::new(),
-			deploy_kind: OnceCell::new(),
-			session_destination: OnceCell::new(),
-			legacy_ssh_store: OnceCell::new(),
+			deploy_kind: OnceLock::new(),
+			session_destination: OnceLock::new(),
+			legacy_ssh_store: OnceLock::new(),
 		}
 	}
 
@@ -597,17 +646,17 @@ impl Config {
 			config: self.clone(),
 			name: name.to_owned(),
 			host_config: Some(host_config),
-			nixos_config: OnceCell::new(),
-			nixos_unchecked_config: OnceCell::new(),
-			groups: OnceCell::new(),
+			nixos_config: OnceLock::new(),
+			nixos_unchecked_config: OnceLock::new(),
+			groups: OnceLock::new(),
 			pkgs_override: None,
 
 			// TODO: Remove with connectivit refactor
 			local: self.localhost == name,
 			session: OnceLock::new(),
-			deploy_kind: OnceCell::new(),
-			session_destination: OnceCell::new(),
-			legacy_ssh_store: OnceCell::new(),
+			deploy_kind: OnceLock::new(),
+			session_destination: OnceLock::new(),
+			legacy_ssh_store: OnceLock::new(),
 		})
 	}
 	pub fn list_hosts(&self) -> Result<Vec<ConfigHost>> {
@@ -625,55 +674,6 @@ impl Config {
 		Ok(nix_go!(fleet_field.hosts[{ host }].nixos.config))
 	}
 
-	/// Shared secrets configured in fleet.nix or in flake
-	pub fn list_configured_shared(&self) -> Result<Vec<String>> {
-		let config_field = &self.config_field;
-		nix_go!(config_field.sharedSecrets).list_fields()
-	}
-	pub fn has_shared(&self, name: &str) -> bool {
-		let data = self.data();
-		data.secrets.contains(name)
-	}
-	pub fn replace_shared(&self, name: String, shared: FleetSecretDistribution) {
-		let mut data = self.data_mut();
-		data.secrets.set_data(name, shared);
-	}
-	pub fn remove_shared(&self, secret: &str) {
-		let mut data = self.data_mut();
-		data.secrets.remove(secret);
-	}
-
-	pub fn list_secrets_for_owner(&self, host: &str) -> Vec<String> {
-		let data = self.data_mut();
-		data.secrets.keys_for_owner(host).cloned().collect()
-	}
-	pub fn list_secrets(&self) -> Vec<String> {
-		let data = self.data_mut();
-		data.secrets.keys().cloned().collect()
-	}
-
-	pub fn has_secret(&self, host: &str, secret: &str) -> bool {
-		let data = self.data();
-		data.secrets.contains_for_owner(secret, host)
-	}
-	pub fn insert_secret(&self, host: String, secret: String, value: FleetSecretData) {
-		let mut data = self.data_mut();
-		data.secrets.set_single_data(secret, host, value);
-	}
-	pub fn remove_secret(&self, host: &str, secret: &str) {
-		let mut data = self.data_mut();
-		data.secrets.drop_owner_no_reencrypt(secret, host);
-	}
-
-	pub fn host_secret(&self, host: &str, secret: &str) -> Option<FleetSecretDistribution> {
-		let data = self.data();
-		data.secrets.get_single(secret, host).cloned()
-	}
-	pub fn shared_secret(&self, secret: &str) -> Option<FleetSecretDistributions> {
-		let data = self.data();
-		data.secrets.get(secret).cloned()
-	}
-
 	pub fn secret_definition(&self, secret: &str) -> Result<Option<SharedSecretDefinition>> {
 		let config = &self.config_field;
 		let shared_secrets = nix_go!(config.secrets);
@@ -685,22 +685,9 @@ impl Config {
 		))))
 	}
 
-	// TODO: Should this be something modifiable from other processes?
-	// E.g terraform provider might want to update FleetData (e.g secrets),
-	// and current implementation assumes only one process holds current fleet.nix
-	// Given that it is no longer needs to be a file for nix evaluation,
-	// maybe it can be a .nix file for persistence, but accessible only
-	// thru some shared state controller? Might it be stored in terraform
-	// state provider?
-	pub fn data(&'_ self) -> MutexGuard<'_, FleetData> {
-		self.data.lock().unwrap()
-	}
-	pub fn data_mut(&'_ self) -> MutexGuard<'_, FleetData> {
-		self.data.lock().unwrap()
-	}
 	pub fn save(&self) -> Result<()> {
 		let mut tempfile = NamedTempFile::new_in(self.directory.clone()).context("failed to create updated version of fleet.nix in the same directory as original.\nDo you have write access to it? Access only to the fleet.nix won't be enough, the directory is used for atomic overwrite operation.\nIt is not recommended to use fleet by root anyway, move fleet project to your home directory.")?;
-		let data = nixlike::serialize(&self.data() as &FleetData)?;
+		let data = nixlike::serialize(&*self.data)?;
 		tempfile.write_all(
 			format!(
 				"# This file contains fleet state and shouldn't be edited by hand\n\n{data}\n\n# vim: ts=2 et nowrap\n"

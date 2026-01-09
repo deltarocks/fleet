@@ -56,7 +56,7 @@ pub async fn list_all_generations(host: &ConfigHost, config: &Config) -> Vec<Gen
 		.collect::<HashSet<_>>();
 	let mut stored_locally = config
 		.local_host()
-		.list_generations(&format!("{}-{}", config.data().gc_root_prefix, host.name))
+		.list_generations(&format!("{}-{}", config.data.gc_root_prefix, host.name))
 		.await
 		.inspect_err(|e| {
 			warn!("failed to list generations available locally: {e}");

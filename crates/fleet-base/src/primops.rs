@@ -4,19 +4,16 @@ use std::sync::OnceLock;
 use anyhow::{Context, bail, ensure};
 use fleet_shared::SecretData;
 use itertools::Itertools;
-use nix_eval::{NativeFn, Value, nix_go, nix_go_json};
+use nix_eval::{NativeFn, Value, await_in_nix, nix_go, nix_go_json};
 use serde::Deserialize;
 use tracing::{info, warn};
 
 use crate::fleetdata::{
 	Expectations, FleetSecretData, FleetSecretDistribution, FleetSecretPart, GeneratorPart,
+	RegenerationConstraints, SecretOwner,
 };
 use crate::host::{Config, ConfigHost};
-use crate::secret::{RegenerationReason, secret_needs_regeneration};
 use anyhow::{Result, anyhow};
-
-#[derive(thiserror::Error, Debug)]
-enum Error {}
 
 pub static PRIMOPS_DATA: OnceLock<Config> = OnceLock::new();
 
@@ -28,7 +25,6 @@ enum GeneratorKind {
 }
 
 pub fn get_pkgs_and_generators(host_on: &ConfigHost, recipients: Vec<String>) -> Result<Value> {
-	info!("get pkgs");
 	let pkgs = host_on.pkgs()?;
 	let default_mk_secret_generators = nix_go!(pkgs.mkSecretGenerators);
 	let generators = nix_go!(default_mk_secret_generators(Obj { recipients }));
@@ -57,6 +53,31 @@ pub fn get_default_generator_drv(config: &Config, generator: &Value) -> Result<V
 	Ok(default_generator_drv)
 }
 
+fn secret_to_parts(
+	secret_name: &str,
+	secret: &BTreeMap<String, FleetSecretPart>,
+	expected: &BTreeMap<String, GeneratorPart>,
+) -> Value {
+	let mut out = HashMap::new();
+	for (part_name, part) in secret {
+		if !expected.contains_key(part_name) {
+			warn!(
+				"secret {secret_name} part {part_name} is stored, but not defined in nixos config, it will not be passed to nix"
+			);
+			continue;
+		};
+		out.insert(
+			part_name.as_str(),
+			Value::new_attrs(HashMap::from_iter([(
+				"raw",
+				Value::new_str(&part.raw.to_string()),
+			)])),
+		);
+	}
+
+	Value::new_attrs(out)
+}
+
 pub async fn generate(
 	config: &Config,
 	expectations: Expectations,
@@ -76,9 +97,12 @@ pub async fn generate(
 			} else {
 				config.local_host()
 			};
-			let pkgs_and_generators =
-				get_pkgs_and_generators(&host_on, expectations.owners.iter().cloned().collect())
-					.context("failed to get pkgs for target host")?;
+			let mut recipients = Vec::new();
+			for owner in &expectations.owners {
+				recipients.push(config.key(owner).await?);
+			}
+			let pkgs_and_generators = get_pkgs_and_generators(&host_on, recipients)
+				.context("failed to get pkgs for target host")?;
 			let generator = call_package(config, &pkgs_and_generators, generator)
 				.context("failed to evaluate generator for target host")?;
 
@@ -147,15 +171,8 @@ pub async fn generate(
 				generation_data: expectations.generation_data.clone(),
 			};
 
-			let new_data = FleetSecretDistribution {
-				secret: new_data,
-				owners: expectations.owners.clone(),
-				_deprecated_managed: true,
-			};
-
-			if let Some(reason) = secret_needs_regeneration(&new_data, &expectations) {
-				bail!("newly generated secret needs to be regenerated: {reason}")
-			}
+			let new_data =
+				FleetSecretDistribution::new(expectations.owners.clone(), new_data, config.now);
 
 			Ok(new_data)
 		}
@@ -166,18 +183,41 @@ pub async fn generate(
 }
 
 pub fn init_primops() {
-	info!("initializing primops");
+	NativeFn::new(
+		c"__fleetEnsureHostSecrets",
+		c"Ensure no extra secrets are stored for the host, pruning unknown",
+		[c"host", c"expectedNonshared", c"expectedShared", c"rest"],
+		|_es, [host, expected_nonshared, expected_shared, rest]| {
+			let host = SecretOwner::host(host.to_string()?);
+			let expected_nonshared: BTreeSet<String> = expected_nonshared.as_json()?;
+			let expected_shared: BTreeSet<String> = expected_shared.as_json()?;
+
+			let mut expected = expected_nonshared;
+			expected.extend(expected_shared);
+
+			let config = PRIMOPS_DATA
+				.get()
+				.expect("primops data should be set on init");
+
+			config
+				.data
+				.secrets
+				.write()
+				.expect("no poisoning")
+				.prune_host(&host, expected);
+
+			Ok(rest.clone())
+		},
+	)
+	.register();
 	NativeFn::new(
 		c"__fleetEnsureHostSecret",
 		c"Ensure secret existence for a host, regenerating it in case of some mismatch",
 		[c"host", c"secret", c"generator"],
 		|es, [host, secret, generator]| {
-			info!("get host");
-			let host = host.to_string()?;
-			info!("get secret");
+			let host = SecretOwner::host(&host.to_string()?);
 			let secret = secret.to_string()?;
 
-			info!("get config");
 			let config = PRIMOPS_DATA
 				.get()
 				.expect("primops data should be set on init");
@@ -193,50 +233,101 @@ pub fn init_primops() {
 
 				ensure!(expected_owners.contains(&host), "secret {secret} does not define {host} as expected owner");
 
-				(true, shared_def.generator()?, expected_owners)
+				(Some(shared_def.clone()), shared_def.generator()?, expected_owners)
 			} else {
 				if shared_def.is_some() {
 					bail!("hosts can only have their own generators for non-shared secrets, either set host secret generator to \"shared\", or remove shared secret generator at fleetConfiguration.secrets.{secret}.generator")
 				}
 
-				(false, generator.clone(), BTreeSet::from_iter([host.clone()]))
+				(None, generator.clone(), BTreeSet::from_iter([host.clone()]))
 			};
 
-			let default_generator_drv = get_default_generator_drv(config, &generator).context("failed to evaluate default generator")?;
-			let expectations = Expectations {
+			let default_generator_drv = get_default_generator_drv(config, &generator)?;
+			let mut expectations = Expectations {
 				parts: nix_go_json!(default_generator_drv.parts),
 				generation_data: nix_go_json!(default_generator_drv.generationData),
-				owners: expected_owners,
+				owners: expected_owners.clone(),
+			};
+			let constraints = if let Some(shared) = &shared{
+				RegenerationConstraints {
+					allow_different: nix_go_json!(default_generator_drv.allowDifferent) && shared.allow_different()?,
+					regenerate_on_owner_added: shared.regenerate_on_owner_added()?,
+					regenerate_on_owner_removed: shared.regenerate_on_owner_added()?,
+				}
+			} else {
+				RegenerationConstraints::host_personal()
 			};
 
-			let reason: RegenerationReason = 'regenerate: {
-				let Some(existing) = config
-					.host_secret(&host, &secret) else {
-					break 'regenerate RegenerationReason::Missing;
+			let mut secrets = config.data.secrets.write().expect("no poisoning");
+			let dists = secrets.get_or_create(&secret);
+
+				if shared.is_some() {
+					dists.prune_shared(&expected_owners, !constraints.allow_different, &expectations.parts, &expectations.generation_data, constraints.regenerate_on_owner_removed, constraints.regenerate_on_owner_added, &config.prefer_identities, config.now);
+				} else {
+					dists.prune_host(host.clone(), &expectations.parts, &expectations.generation_data, config.now);
 				};
-				if let Some(reason) = secret_needs_regeneration(&existing, &expectations) {
-					break 'regenerate reason;
+
+				if let Some(dist) = dists.get(&host) {
+					return Ok(secret_to_parts(&secret, &dist.secret.parts, &expectations.parts));
+				};
+
+				let mut reencrypt_targets = expectations.owners.clone();
+				for dist in dists.distributions() {
+					for own in dist.owners() {
+						reencrypt_targets.remove(own);
+					}
 				}
+				if !constraints.regenerate_on_owner_added {
+					if let Some(unpruned) = dists.try_unprune(host.clone()) {
+						return Ok(secret_to_parts(&secret, &unpruned.secret.parts, &expectations.parts));
+					} else if let Some(best) = dists.best_distribution_for_reencryption(&config.prefer_identities) {
+						let new_owners = reencrypt_targets.clone();
+						let mut reencrypt_targets = reencrypt_targets;
+						reencrypt_targets.extend(best.owners().cloned());
 
-				let mut parts = expectations.parts.clone();
+						let mut preferred = best.owners().collect_vec();
+						preferred.sort_by_key(|v| !config.prefer_identities.contains(*v));
 
-				let mut out = HashMap::new();
-				for (part_name, part) in &existing.secret.parts {
-					let Some(definition) = parts.remove(part_name) else {
-						warn!("secret {secret} part {part_name} is stored, but not defined in nixos config, it will not be passed to nix");
-						continue;
+						warn!("reencrypting secret {secret} as it is missing for host {host}");
+
+						for owner in preferred {
+							if let Some(hostname) = owner.as_host() && let Ok(host) = config.host(hostname) {
+								let best = best.clone();
+								let reencrypt_targets = reencrypt_targets.clone();
+								let reencrypted = match await_in_nix(async move {
+										host.reencrypt_distribution(&best, reencrypt_targets.clone(), config.now).await
+								}) {
+									Ok(r) => r,
+									Err(e) => {
+										warn!("reencryption failed on {hostname}: {e:?}");
+										continue;
+									}
+								};
+								dists.extend(reencrypted.clone(), format!("secret was reencrypted to extend with new owners: {new_owners:?}"));
+								return Ok(secret_to_parts(&secret, &reencrypted.secret.parts, &expectations.parts));
+							};
+						}
+						warn!("failed to reencrypt using any host")
 					};
-					assert!(definition.encrypted != part.raw.encrypted, "encryption status is checked by secret_needs_regeneration");
-					out.insert(part_name.as_str(), Value::new_attrs(HashMap::from_iter([("raw", Value::new_str(&part.raw.to_string()))])));
+				};
+
+			if constraints.allow_different {
+				for dist in dists.distributions() {
+					for own in dist.owners() {
+						expectations.owners.remove(own);
+					}
 				}
-				assert!(parts.is_empty(), "secret part is missing, secret_needs_regeneration should check that");
+			}
+			info!("secret {secret} is being generated for {:?}", expectations.owners);
 
-				return Ok(Value::new_attrs(out))
-			};
+			let expectations_ = expectations.clone();
+			let generated = await_in_nix(async move {
+				generate(config, expectations_, &generator, &default_generator_drv).await
+			})?;
 
-			todo!()
+			dists.extend(generated.clone(), format!("secret was generated"));
 
-
+			return Ok(secret_to_parts(&secret, &generated.secret.parts, &expectations.parts));
 		},
 	)
 	.register();

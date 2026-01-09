@@ -1,17 +1,17 @@
 use std::str::FromStr as _;
 
 use age::Recipient;
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use futures::{StreamExt as _, TryStreamExt as _};
 use itertools::Itertools as _;
 use tracing::warn;
 
-use crate::host::Config;
+use crate::{fleetdata::SecretOwner, host::Config};
 
 impl Config {
-	pub fn cached_key(&self, host: &str) -> Option<String> {
-		let data = self.data();
-		let key = data.hosts.get(host).map(|h| &h.encryption_key);
+	fn cached_host_key(&self, host: &str) -> Option<String> {
+		let hosts = self.data.hosts.read().expect("no poisoning");
+		let key = hosts.get(host).map(|h| &h.encryption_key);
 		if let Some(key) = key
 			&& key.is_empty()
 		{
@@ -20,13 +20,13 @@ impl Config {
 		key.cloned()
 	}
 	pub fn update_key(&self, host: &str, key: String) {
-		let mut data = self.data_mut();
-		let host = data.hosts.entry(host.to_string()).or_default();
+		let mut hosts = self.data.hosts.write().expect("no poisoning");
+		let host = hosts.entry(host.to_string()).or_default();
 		host.encryption_key = key.trim().to_string();
 	}
 
-	pub async fn key(&self, host: &str) -> anyhow::Result<String> {
-		if let Some(key) = self.cached_key(host) {
+	pub async fn host_key(&self, host: &str) -> anyhow::Result<String> {
+		if let Some(key) = self.cached_host_key(host) {
 			Ok(key)
 		} else {
 			warn!("Loading key for {}", host);
@@ -38,18 +38,24 @@ impl Config {
 			Ok(key)
 		}
 	}
+	pub async fn key(&self, owner: &SecretOwner) -> anyhow::Result<String> {
+		if let Some(host) = owner.as_host() {
+			self.host_key(host).await
+		} else {
+			bail!("only host keys supported for now")
+		}
+	}
 	/// Insecure, requires root
-	pub async fn recipient(&self, host: &str) -> anyhow::Result<Box<dyn Recipient>> {
+	pub async fn recipient(&self, host: &SecretOwner) -> anyhow::Result<Box<dyn Recipient>> {
 		let key = self.key(host).await?;
 		age::ssh::Recipient::from_str(&key)
 			.map_err(|e| anyhow!("parse recipient error: {e:?}"))
 			.map(|v| Box::new(v) as Box<dyn Recipient>)
 	}
 
-	pub async fn recipients(&self, hosts: Vec<String>) -> Result<Vec<Box<dyn Recipient>>> {
-		let hosts = self.expand_owner_set(hosts)?;
+	pub async fn recipients(&self, hosts: Vec<SecretOwner>) -> Result<Vec<Box<dyn Recipient>>> {
 		futures::stream::iter(hosts.iter())
-			.then(|m| self.recipient(m.as_ref()))
+			.then(|m| self.recipient(m))
 			.try_collect::<Vec<_>>()
 			.await
 	}
@@ -58,9 +64,8 @@ impl Config {
 	pub async fn orphaned_data(&self) -> Result<Vec<String>> {
 		let mut out = Vec::new();
 		let host_names = self.list_hosts()?.into_iter().map(|h| h.name).collect_vec();
-		for hostname in self
-			.data()
-			.hosts
+		let hosts = self.data.hosts.read().expect("no poisoning");
+		for hostname in hosts
 			.iter()
 			.filter(|(_, host)| !host.encryption_key.is_empty())
 			.map(|(n, _)| n)

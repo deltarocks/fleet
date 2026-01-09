@@ -1,9 +1,10 @@
 {
   lib,
+  config,
   ...
 }:
 let
-  inherit (lib.options) mkOption literalExpression;
+  inherit (lib.options) mkOption;
   inherit (lib.types)
     nullOr
     listOf
@@ -16,6 +17,8 @@ let
     uniq
     ;
   inherit (lib.strings) concatStringsSep;
+  inherit (lib.lists) elem filter;
+  inherit (lib.attrsets) attrNames;
 
   sharedSecret =
     { config, ... }:
@@ -30,28 +33,33 @@ let
         regenerateOnOwnerAdded = mkOption {
           type = bool;
           description = ''
-            Controls whether the secret must be regenerated when new owners are added.
+            Whether the secret prefers to be rotated when new owners are added.
 
-            Set to true when the secret contains owner-specific references (e.g., X.509 Subject Alternative Names).
-            When true, adding a new owner will trigger secret regeneration instead of simple re-encryption.
+            Note that this is only a security measure, if the secret needs to be regenerated due to e.g X.509 SANs
+            changes - then you most likely want to use generationData for that instead.
           '';
+          default = false;
         };
         regenerateOnOwnerRemoved = mkOption {
-          default = config.regenerateOnOwnerAdded;
-          defaultText = literalExpression "regenerateOnOwnerAdded";
           type = bool;
           description = ''
-            Determines secret behavior when owners are removed from the configuration.
-
-            Typically mirrors regenerateOnOwnerAdded. Override cautiously.
-            Set to false if host permissions are revoked through alternative mechanisms like firewall rules.
+            Whether the secret prefers to be rotated when the owners are removed, so the encrypted data
+            stored in fleet state can't be decrypted by those. Note that the secrets are still present in encrypted
+            form on those hosts until gc happens.
           '';
+          default = false;
         };
         allowDifferent = mkOption {
           type = bool;
           description = ''
-            When adding owner, do not update secret value for other owners, instead creating a new distribution
+            When adding owner, do not update secret value for other owners, instead creating a new distribution.
+
+            Defaults to true, since all secrets might differ on hosts on some point of deployment process.
+
+            Secret generator might also have opinion on this, like it makes little sense for askPass/synchronizing
+            generators to keep old data.
           '';
+          default = true;
         };
         generator = mkOption {
           type = uniq (nullOr (functionTo package));
@@ -75,6 +83,9 @@ in
     };
   };
   config = {
+    nixos = {host, ...}: {
+      _providedSharedSecrets = filter (name: elem host.name config.secrets.${name}.expectedOwners) (attrNames config.secrets);
+    };
     nixpkgs.overlays = [
       (final: prev: {
         mkSecretGenerators =
@@ -90,6 +101,7 @@ in
                 # (Some secrets-encryption-in-git/managed PKI solution is expected)
                 impureOn ? null,
                 generationData ? null,
+                allowDifferent ? true,
                 parts,
               }:
               (prev.writeShellScript "impureGenerator.sh" ''
@@ -118,7 +130,12 @@ in
               '').overrideAttrs
                 (old: {
                   passthru = {
-                    inherit impureOn parts generationData;
+                    inherit
+                      impureOn
+                      parts
+                      generationData
+                      allowDifferent
+                      ;
                     generatorKind = "impure";
                   };
                 });

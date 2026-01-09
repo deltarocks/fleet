@@ -15,7 +15,12 @@ let
   inherit (lib.stringsWithDeps) stringAfter;
   inherit (lib.options) mkOption literalExpression;
   inherit (lib.lists) optional elem;
-  inherit (lib.attrsets) mapAttrs mapAttrsToList;
+  inherit (lib.attrsets)
+    mapAttrs
+    mapAttrsToList
+    filterAttrs
+    attrNames
+    ;
   inherit (lib.modules) mkIf;
   inherit (lib.types)
     submodule
@@ -25,9 +30,9 @@ let
     uniq
     functionTo
     package
-    bool
     enum
     either
+    listOf
     ;
   inherit (fleetLib.strings) decodeRawSecret;
 
@@ -132,10 +137,33 @@ let
 in
 {
   options = {
+    _providedSharedSecrets = mkOption {
+      description = ''
+        List of shared secrets, for which the current host was specified as `expectedOwners`
+      '';
+      type = listOf str;
+      default = [];
+      internal = true;
+    };
     secrets = mkOption {
       type = attrsOf secretType;
       default = { };
-      apply = mapAttrs (_: secret: secret.parts // { definition = secret; });
+      apply =
+        secrets:
+        mapAttrs (_: secret: secret.parts // { definition = secret; })
+
+          (
+            let
+              hostName = host.name;
+              expectedNonshared = attrNames (filterAttrs (_: def: def.generator != "shared") secrets);
+              expectedShared = config._providedSharedSecrets;
+            in
+            builtins.deepSeq [
+              hostName
+              expectedNonshared
+              expectedShared
+            ] (builtins.fleetEnsureHostSecrets hostName expectedNonshared expectedShared secrets)
+          );
       description = "Host-local secrets";
     };
     system.secretsData = mkOption {
@@ -163,7 +191,7 @@ in
           (secret.definition.generator == "shared") == hasSharedDefinition
           && (
             hasSharedDefinition
-            -> (elem host._module.args.name fleetConfiguration.secrets.${name}.expectedOwners)
+            -> (elem host.name fleetConfiguration.secrets.${name}.expectedOwners)
           );
         message =
           if hasSharedDefinition then

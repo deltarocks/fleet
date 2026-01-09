@@ -1,5 +1,5 @@
 use std::{
-	collections::BTreeMap,
+	collections::{BTreeMap, BTreeSet},
 	env::current_dir,
 	ffi::OsString,
 	str::FromStr,
@@ -7,6 +7,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
+use chrono::Utc;
 use nix_eval::{
 	FetchSettings, FlakeLockFlags, FlakeReference, FlakeReferenceParseFlags, FlakeSettings, Value,
 	gc_now, nix_go, util::assert_warn,
@@ -212,7 +213,7 @@ impl FleetOpts {
 		}
 		let bytes =
 			std::fs::read_to_string(&fleet_data_path).context("reading fleet state (fleet.nix)")?;
-		let data = Arc::new(Mutex::new(FleetData::from_str(&bytes)?));
+		let data = Arc::new(FleetData::from_str(&bytes)?);
 
 		init_primops();
 
@@ -265,6 +266,10 @@ impl FleetOpts {
 			gc_now();
 		}
 		let config = Config(Arc::new(FleetConfigInternals {
+			// TODO: Load from somewhere
+			prefer_identities: BTreeSet::new(),
+			now: Utc::now(),
+
 			directory,
 			data,
 			flake_outputs: flake,

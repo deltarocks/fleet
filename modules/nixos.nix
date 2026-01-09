@@ -10,7 +10,7 @@
 let
   inherit (lib.attrsets) mapAttrs;
   inherit (lib.options) mkOption;
-  inherit (lib.types) deferredModule unspecified;
+  inherit (lib.types) deferredModule unspecified uniq str;
   inherit (lib.strings) escapeNixIdentifier;
   inherit (fleetLib.options) mkHostsOption;
 
@@ -24,9 +24,18 @@ in
       '';
       type = deferredModule;
     };
-    hosts = mkHostsOption (hostArgs: {
+    hosts = mkHostsOption (hostArgs: let
+      hostName = hostArgs.config._module.args.name;
+    in {
       inherit _file;
       options = {
+        name = mkOption {
+          description = ''
+            Host name (alias)
+          '';
+          type = uniq str;
+          default = hostName;
+        };
         nixos = mkOption {
           description = ''
             Nixos configuration for the current host.
@@ -42,7 +51,7 @@ in
               prefix = [
                 "fleetConfiguration"
                 "hosts"
-                hostArgs.config._module.args.name
+                hostName
                 "nixos"
               ];
               modules = (import "${modulesPath}/module-list.nix") ++ [

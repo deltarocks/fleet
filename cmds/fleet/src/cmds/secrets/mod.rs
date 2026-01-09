@@ -412,7 +412,7 @@ impl Secret {
 					if opts.should_skip(&host)? {
 						continue;
 					}
-					config.key(&host.name).await?;
+					config.host_key(&host.name).await?;
 				}
 			}
 			Secret::Read {
@@ -421,6 +421,7 @@ impl Secret {
 				part: part_name,
 				mut prefer_identities,
 			} => {
+				/*
 				let Some(secret) = config.shared_secret(&name) else {
 					bail!("secret doesn't exists");
 				};
@@ -460,6 +461,8 @@ impl Secret {
 					part.raw.data.clone()
 				};
 				stdout().write_all(&data)?;
+				*/
+				todo!()
 			}
 			Secret::Regenerate {
 				prefer_identities,
@@ -605,6 +608,7 @@ impl Secret {
 				todo!()
 			}
 			Secret::List {} => {
+				/*
 				let _span = info_span!("loading secrets").entered();
 				let configured = config.list_configured_shared()?;
 				#[derive(Tabled)]
@@ -638,6 +642,8 @@ impl Secret {
 					*/
 				}
 				// info!("loaded\n{}", Table::new(table).to_string())
+				*/
+				todo!()
 			}
 			Secret::Edit {
 				name,
@@ -645,7 +651,7 @@ impl Secret {
 				part,
 				add,
 			} => {
-				let secret = config
+				/*let secret = config
 					.host_secret(&machine, &name)
 					.context("secret not found")?;
 				if let Some(data) = secret.secret.parts.get(&part) {
@@ -656,7 +662,8 @@ impl Secret {
 					String::new()
 				} else {
 					bail!("part {part} not found in secret {name}. Did you mean to `--add` it?");
-				};
+				};*/
+				todo!()
 			}
 		}
 		Ok(())

@@ -1149,7 +1149,6 @@ dependencies = [
  "base64 0.22.1",
  "serde",
  "unicode_categories",
- "z85",
 ]
 
 [[package]]
@@ -2089,6 +2088,7 @@ dependencies = [
  "serde_json",
  "test-log",
  "thiserror 2.0.17",
+ "tokio",
  "tracing",
  "tracing-indicatif",
  "vte 0.15.0",
@@ -4638,12 +4638,6 @@ dependencies = [
  "syn",
  "synstructure",
 ]
-
-[[package]]
-name = "z85"
-version = "3.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b3a41ce106832b4da1c065baa4c31cf640cf965fa1483816402b7f6b96f0a64"
 
 [[package]]
 name = "zerocopy"

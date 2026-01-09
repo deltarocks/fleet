@@ -1,5 +1,4 @@
 use std::{
-	collections::BTreeMap,
 	fmt::{self, Display},
 	str::FromStr,
 };
@@ -15,7 +14,6 @@ pub struct SecretData {
 }
 
 const BASE64_ENCODED_PREFIX: &str = "<BASE64-ENCODED>\n";
-const Z85_ENCODED_PREFIX: &str = "<Z85-ENCODED>\n";
 // Multiline text in Nix can only end with \n, which is not cool for actual single-line strings.
 const PLAINTEXT_NEWLINE_PREFIX: &str = "<PLAINTEXT-NL>\n";
 const PLAINTEXT_PREFIX: &str = "<PLAINTEXT>";
@@ -54,18 +52,12 @@ impl FromStr for SecretData {
 			STANDARD_NO_PAD
 				.decode(unprefixed.replace(['\n', '\t', ' '], ""))
 				.map_err(|e| format!("base64-encoded failed: {e}"))?
-		} else if let Some(unprefixed) = string.strip_prefix(Z85_ENCODED_PREFIX) {
-			z85::decode(unprefixed.replace(['\n', '\t', ' '], ""))
-				.map_err(|e| format!("z85-encoded failed: {e}"))?
 		} else if let Some(unprefixed) = string.strip_prefix(PLAINTEXT_NEWLINE_PREFIX) {
 			unprefixed.as_bytes().to_owned()
 		} else if let Some(unprefixed) = string.strip_prefix(PLAINTEXT_PREFIX) {
 			unprefixed.as_bytes().to_owned()
 		} else {
-			let secret_prefix = format!("{SECRET_PREFIX}{Z85_ENCODED_PREFIX}");
-			return Err(format!(
-				"unknown secret encoding. If you're migrating from old version of fleet, prefix public secret fields with {PLAINTEXT_PREFIX:?}, and encrypted data with {secret_prefix:?}: {string}"
-			));
+			return Err(format!("unknown secret encoding"));
 		};
 		Ok(Self { data, encrypted })
 	}

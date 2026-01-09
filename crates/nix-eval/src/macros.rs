@@ -68,13 +68,13 @@ macro_rules! nix_expr {
 #[macro_export]
 macro_rules! nix_go {
 	(@o($o:expr, $path:expr) . $var:ident $($tt:tt)*) => {{
-		nix_go!(@o($o.get_field(stringify!($var)).context(concat!("getting nested ", $path))?, $path) $($tt)*)
+		nix_go!(@o(tokio::task::block_in_place(|| $o.get_field(stringify!($var))).context(concat!("getting nested ", $path))?, $path) $($tt)*)
 	}};
 	(@o($o:expr, $path:expr) [ $v:expr ] $($tt:tt)*) => {{
-		nix_go!(@o($o.get_field($v).context(concat!("getting nested ", $path))?, $path) $($tt)*)
+		nix_go!(@o(tokio::task::block_in_place(|| $o.get_field($v)).context(concat!("getting nested ", $path))?, $path) $($tt)*)
 	}};
 	(@o($o:expr, $path:expr) ($($var:tt)*) $($tt:tt)*) => {
-		nix_go!(@o($o.call($crate::nix_expr_inner!($($var)+)).context(concat!("getting nested ", $path))?, $path) $($tt)*)
+		nix_go!(@o(tokio::task::block_in_place(|| $o.call($crate::nix_expr_inner!($($var)+))).context(concat!("getting nested ", $path))?, $path) $($tt)*)
 	};
 	(@o($o:expr, $path:expr)) => {$o};
 	($field:ident $($tt:tt)+) => {{
@@ -87,6 +87,6 @@ macro_rules! nix_go {
 #[macro_export]
 macro_rules! nix_go_json {
 	($($tt:tt)*) => {{
-		$crate::nix_go!($($tt)*).as_json()?
+		tokio::task::block_in_place(|| $crate::nix_go!($($tt)*).as_json())?
 	}};
 }

@@ -334,7 +334,7 @@ async fn run_nix_inner_raw(
 	let mut stderr = child.stderr.take().unwrap();
 	let stdout = child.stdout.take().unwrap();
 	let mut err = FramedRead::new(&mut stderr, LinesCodec::new());
-	let mut out: Option<Box<dyn AsyncRead + Unpin>> = Some(Box::new(stdout));
+	let mut out: Option<Box<dyn AsyncRead + Unpin + Send>> = Some(Box::new(stdout));
 	let mut ob = want_stdout
 		.then(|| out.take().unwrap())
 		.unwrap_or_else(|| Box::new(EmptyAsyncRead));
@@ -397,7 +397,7 @@ async fn run_nix_inner_raw_ssh(
 	let mut stderr = child.stderr().take().unwrap();
 	let stdout = child.stdout().take().unwrap();
 	let mut err = FramedRead::new(&mut stderr, LinesCodec::new());
-	let mut out: Option<Box<dyn AsyncRead + Unpin>> = Some(Box::new(stdout));
+	let mut out: Option<Box<dyn AsyncRead + Unpin + Send>> = Some(Box::new(stdout));
 	let mut ob = want_stdout
 		.then(|| out.take().unwrap())
 		.unwrap_or_else(|| Box::new(EmptyAsyncRead));

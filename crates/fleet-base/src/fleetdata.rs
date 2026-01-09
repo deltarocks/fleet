@@ -1,10 +1,12 @@
 use std::{
+	cmp::Ordering,
 	collections::{
 		BTreeMap, BTreeSet,
 		btree_map::{self, Entry},
 	},
+	fmt,
 	io::{self, Cursor},
-	ops::Deref,
+	sync::RwLock,
 };
 
 use age::Recipient;
@@ -77,19 +79,18 @@ pub struct FleetData {
 	pub manager_keys: Vec<ManagerKey>,
 
 	#[serde(default)]
-	pub hosts: BTreeMap<String, HostData>,
+	pub hosts: RwLock<BTreeMap<String, HostData>>,
 
 	#[serde(default, alias = "shared_secrets")]
-	pub secrets: FleetSecrets,
+	pub secrets: RwLock<FleetSecrets>,
 
 	// extra_name => anything
 	#[serde(default)]
-	#[serde(skip_serializing_if = "BTreeMap::is_empty")]
-	pub extra: BTreeMap<String, Value>,
+	pub extra: RwLock<BTreeMap<String, Value>>,
 
 	#[serde(default)]
-	#[serde(skip_serializing_if = "BTreeMap::is_empty")]
-	host_secrets: BTreeMap<String, BTreeMap<String, FleetSecretDistribution>>,
+	#[serde(skip_serializing)]
+	host_secrets: BTreeMap<SecretOwner, BTreeMap<String, FleetSecretDistribution>>,
 }
 impl FleetData {
 	pub fn from_str(s: &str) -> anyhow::Result<Self> {
@@ -97,6 +98,8 @@ impl FleetData {
 		if !data.host_secrets.is_empty() {
 			info!("migrating host secrets into shared secrets structure");
 			data.secrets
+				.write()
+				.expect("no poisoning")
 				.merge_from_hosts(std::mem::take(&mut data.host_secrets));
 		}
 		Ok(data)
@@ -130,18 +133,38 @@ pub struct FleetSecretPart {
 #[serde(rename_all = "camelCase")]
 #[must_use]
 pub struct FleetSecretData {
-	#[serde(default = "Utc::now")]
 	pub created_at: DateTime<Utc>,
-	#[serde(default)]
-	#[serde(skip_serializing_if = "Option::is_none", alias = "expire_at")]
+	#[serde(default, skip_serializing_if = "Option::is_none", alias = "expire_at")]
 	pub expires_at: Option<DateTime<Utc>>,
 
 	#[serde(flatten)]
 	pub parts: BTreeMap<String, FleetSecretPart>,
 
-	#[serde(default)]
-	#[serde(skip_serializing_if = "Value::is_null")]
+	#[serde(default, skip_serializing_if = "Value::is_null")]
 	pub generation_data: Value,
+}
+
+fn is_false(b: &bool) -> bool {
+	*b == false
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialOrd, Ord, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct SecretOwner(String);
+
+impl fmt::Display for SecretOwner {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		write!(f, "host:{}", self.0)
+	}
+}
+
+impl SecretOwner {
+	pub fn host(s: impl AsRef<str>) -> SecretOwner {
+		SecretOwner(s.as_ref().to_owned())
+	}
+	pub fn as_host(&self) -> Option<&str> {
+		Some(&self.0)
+	}
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -149,109 +172,392 @@ pub struct FleetSecretData {
 #[must_use]
 pub struct FleetSecretDistribution {
 	#[serde(default)]
-	pub owners: BTreeSet<String>,
+	owners: BTreeSet<SecretOwner>,
+	#[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+	owners_pending_prune: BTreeMap<SecretOwner, String>,
+
 	#[serde(flatten)]
 	pub secret: FleetSecretData,
 
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pending_prune: Option<String>,
 	#[serde(default, skip_serializing, alias = "managed")]
-	pub _deprecated_managed: bool,
+	_deprecated_managed: bool,
 }
 
-#[derive(Clone)]
-#[must_use]
-pub struct FleetSecretDistributions(Vec<FleetSecretDistribution>);
+const EMPTY_PENDING_PRUNE: &BTreeMap<SecretOwner, String> = &BTreeMap::new();
+impl FleetSecretDistribution {
+	pub fn new(owners: BTreeSet<SecretOwner>, secret: FleetSecretData, now: DateTime<Utc>) -> Self {
+		assert!(
+			!owners.is_empty(),
+			"distribution should have at least one owner"
+		);
+		if let Some(expires_at) = &secret.expires_at {
+			assert!(
+				*expires_at > now,
+				"secret should not be expired on creation"
+			);
+		}
+		Self {
+			owners,
+			secret,
+			owners_pending_prune: BTreeMap::new(),
+			pending_prune: None,
+			_deprecated_managed: true,
+		}
+	}
 
-impl Deref for FleetSecretDistributions {
-	type Target = [FleetSecretDistribution];
+	fn owners_ex(&self, including_pruned: bool) -> impl Iterator<Item = &SecretOwner> {
+		let pending_prune = if including_pruned {
+			&self.owners_pending_prune
+		} else {
+			EMPTY_PENDING_PRUNE
+		};
+		self.owners.iter().chain(pending_prune.keys())
+	}
+	pub fn owners(&self) -> impl Iterator<Item = &SecretOwner> {
+		self.owners_ex(false)
+	}
 
-	fn deref(&self) -> &Self::Target {
-		self.0.as_slice()
+	pub fn prune(&mut self, reason: String) {
+		assert!(
+			self.pending_prune.is_none(),
+			"it shouldn't be possible to prune the same distribution twice using public api"
+		);
+		self.pending_prune = Some(reason);
+	}
+	pub fn prune_owners(&mut self, owners: &BTreeSet<SecretOwner>, reason: String) {
+		// if self.owners.iter().all(|o| owners.contains(o)) && self.owners_pending_prune.is_empty() {
+		// 	self.prune(format!("all owners were pruned: {reason}"));
+		// 	return;
+		// }
+		for owner in owners {
+			if self.owners.remove(owner) {
+				self.owners_pending_prune
+					.insert(owner.to_owned(), reason.clone());
+			}
+		}
+		// if self.owners.is_empty() {
+		// 	self.prune("no owners left".to_owned());
+		// }
+	}
+	pub fn unprune_owner(&mut self, owner: SecretOwner) {
+		if self.owners_pending_prune.remove(&owner).is_some() {
+			self.owners.insert(owner);
+		}
 	}
 }
 
+#[derive(Clone, Debug, Default)]
+#[must_use]
+pub struct FleetSecretDistributions {
+	stored: Vec<FleetSecretDistribution>,
+}
+
+fn compare_dists(
+	a: &FleetSecretDistribution,
+	b: &FleetSecretDistribution,
+	prefer_identities: &BTreeSet<SecretOwner>,
+	include_pruned_owners: bool,
+) -> Ordering {
+	use Ordering::*;
+	if prefer_identities.is_empty() {
+		let a_has = a
+			.owners_ex(include_pruned_owners)
+			.any(|o| prefer_identities.contains(o));
+		let b_has = b
+			.owners_ex(include_pruned_owners)
+			.any(|o| prefer_identities.contains(o));
+		match (a_has, b_has) {
+			(true, false) => return Greater,
+			(false, true) => return Less,
+			_ => {}
+		}
+	}
+	match (a.secret.expires_at, b.secret.expires_at) {
+		(None, Some(_)) => return Greater,
+		(Some(_), None) => return Less,
+		(Some(a), Some(b)) => {
+			// Later is better
+			return a.cmp(&b);
+		}
+		(None, None) => {}
+	}
+
+	// Which one is easier to access
+	return a.owners.len().cmp(&b.owners.len());
+}
+
 impl FleetSecretDistributions {
-	pub fn owners(&self) -> impl Iterator<Item = &String> {
-		self.0.iter().flat_map(|v| v.owners.iter())
+	/// Drop expired distributions
+	fn prune_expired(&mut self, now: DateTime<Utc>) {
+		for ele in self.distributions_mut() {
+			if let Some(expires_at) = ele.secret.expires_at {
+				if expires_at < now {
+					ele.prune(format!("expired during check at {now}"));
+				}
+			}
+		}
+	}
+	/// Perform all pruning relevant to shared secrets
+	/// Also see expected_owner_removed
+	pub fn prune_shared(
+		&mut self,
+		expected_owners: &BTreeSet<SecretOwner>,
+		unique: bool,
+		expected_parts: &BTreeMap<String, GeneratorPart>,
+		expected_generation_data: &Value,
+		regenerate_on_owner_removed: bool,
+		regenerate_on_owner_added: bool,
+		prefer_identities: &BTreeSet<SecretOwner>,
+		now: DateTime<Utc>,
+	) {
+		self.prune_expired(now);
+		self.prune_generation_data(expected_generation_data, None);
+		self.prune_missing_parts(expected_parts, None);
+
+		let current_owners = self.owners().cloned().collect::<BTreeSet<SecretOwner>>();
+
+		let mut to_add = expected_owners.difference(&current_owners);
+		if to_add.next().is_some() && unique && regenerate_on_owner_added {
+			for dist in self.distributions_mut() {
+				dist.prune(format!(
+					"owners missing, can't add new distribution, regeneration preferred"
+				));
+			}
+			return;
+		}
+
+		for to_remove in current_owners.difference(&expected_owners) {
+			self.entry(to_remove.clone()).remove(
+				regenerate_on_owner_removed,
+				"owner was removed from expected owners list, regenerate_on_owner_removed is set"
+					.to_string(),
+			);
+		}
+		if unique {
+			self.prune_nonunique(prefer_identities);
+		}
+	}
+	pub fn prune_host(
+		&mut self,
+		owner: SecretOwner,
+		expected_parts: &BTreeMap<String, GeneratorPart>,
+		expected_generation_data: &Value,
+		now: DateTime<Utc>,
+	) {
+		self.prune_expired(now);
+		self.prune_generation_data(expected_generation_data, Some(&owner));
+		// TODO: Owner-based pruning is warranted (e.g host no longer has secret defined)
+		self.prune_missing_parts(expected_parts, Some(&owner));
+	}
+	/// Position of best distributions as in iterator returned by distributions()
+	/// None if distributions not found
+	fn best_idx(
+		&self,
+		prefer_identities: &BTreeSet<SecretOwner>,
+		include_pruned_owners: bool,
+	) -> Option<usize> {
+		self.distributions()
+			.enumerate()
+			.max_by(|(_, a), (_, b)| {
+				compare_dists(&a, &b, prefer_identities, include_pruned_owners)
+			})
+			.map(|(p, _)| p)
+	}
+	/// Secret wants to be the same on all hosts, leave only one unpruned version of it
+	fn prune_nonunique(&mut self, prefer_identities: &BTreeSet<SecretOwner>) {
+		if self.distributions().next().is_none() {
+			return;
+		}
+		let best = self.best_idx(prefer_identities, false).expect("not empty");
+		for (i, dist) in self.distributions_mut().enumerate() {
+			if i != best {
+				dist.prune(
+					"secret wants to be the same on all hosts, only the best one was left"
+						.to_owned(),
+				);
+			}
+		}
+	}
+
+	pub fn try_unprune(&mut self, owner: SecretOwner) -> Option<&FleetSecretDistribution> {
+		assert!(self.get(&owner).is_none(), "secret is not pruned for host");
+		if let Some(dist) = self
+			.distributions_mut()
+			.find(|v| v.owners_pending_prune.contains_key(&owner))
+		{
+			dist.unprune_owner(owner);
+			Some(dist)
+		} else {
+			None
+		}
+	}
+
+	pub fn best_distribution_for_reencryption(
+		&mut self,
+		prefer_identities: &BTreeSet<SecretOwner>,
+	) -> Option<&mut FleetSecretDistribution> {
+		let best_idx = self.best_idx(prefer_identities, true)?;
+		self.distributions_mut().nth(best_idx)
+	}
+
+	fn prune_missing_parts(
+		&mut self,
+		expected_parts: &BTreeMap<String, GeneratorPart>,
+		filter_owner: Option<&SecretOwner>,
+	) {
+		'dist: for ele in self.distributions_mut() {
+			if let Some(filter_owner) = filter_owner {
+				if !ele.owners.contains(filter_owner) {
+					continue;
+				}
+				// Note: secret still can have multiple owners even if it is host-owned
+				// in this case we expect that all owners using the same generator, so we can prune distribution for all of them
+			}
+			for (name, part) in expected_parts {
+				let Some(stored_part) = ele.secret.parts.get(name) else {
+					ele.prune(format!("secret definition added new part: {name}"));
+					continue 'dist;
+				};
+				if part.encrypted != stored_part.raw.encrypted {
+					ele.prune(format!(
+						"secret definition now requires part to be {}",
+						if part.encrypted {
+							"encrypted"
+						} else {
+							"non-encrypted"
+						}
+					));
+					continue 'dist;
+				}
+			}
+		}
+	}
+	fn prune_generation_data(
+		&mut self,
+		expected_generation_data: &Value,
+		filter_owner: Option<&SecretOwner>,
+	) {
+		for ele in self.distributions_mut() {
+			if let Some(filter_owner) = filter_owner {
+				if !ele.owners.contains(filter_owner) {
+					continue;
+				}
+				// Note: secret still can have multiple owners even if it is host-owned
+				// in this case we expect that all owners using the same generator, so we can prune distribution for all of them
+			}
+			if ele.secret.generation_data != *expected_generation_data {
+				ele.prune(format!(
+					"expected generation data mismatch: {expected_generation_data:?}"
+				));
+			}
+		}
+	}
+
+	/// Prune all distributions with no unpruned owners.
+	/// For ease of reencryption where possible, it is only called on persistence, when in memory - pruned owners are kept and
+	/// can decrypt their secrets.
+	fn prune_dead(&mut self) {
+		for ele in self.distributions_mut() {
+			if ele.owners.is_empty() {
+				ele.prune("no owners left".to_owned());
+			}
+		}
+	}
+
+	pub fn distributions(&self) -> impl Iterator<Item = &FleetSecretDistribution> {
+		self.stored.iter().filter(|v| v.pending_prune.is_none())
+	}
+	pub fn distributions_mut(&mut self) -> impl Iterator<Item = &mut FleetSecretDistribution> {
+		self.stored.iter_mut().filter(|v| v.pending_prune.is_none())
+	}
+	pub fn owners(&self) -> impl Iterator<Item = &SecretOwner> {
+		self.distributions().flat_map(|v| v.owners.iter())
 	}
 	#[allow(
 		clippy::len_without_is_empty,
 		reason = "should not be empty for a long time"
 	)]
 	pub fn len(&self) -> usize {
-		self.0.len()
+		self.distributions().count()
 	}
 
-	pub fn get(&self, owner: &str) -> Option<&FleetSecretDistribution> {
-		self.0.iter().find(|d| d.owners.contains(owner))
+	pub fn get(&self, owner: &SecretOwner) -> Option<&FleetSecretDistribution> {
+		self.distributions().find(|d| d.owners.contains(owner))
 	}
-	fn entry(&mut self, owner: String) -> DistEntry<'_> {
-		let Some(idx) = self.0.iter().position(|d| d.owners.contains(&owner)) else {
+	fn entry(&mut self, owner: SecretOwner) -> DistEntry<'_> {
+		let Some((idx, dist)) = self
+			.distributions()
+			.enumerate()
+			.find(|(_, d)| d.owners.contains(&owner))
+		else {
 			return DistEntry::Vacant(VacantDistEntry {
 				distributions: self,
-				owner,
+				owners: BTreeSet::from([owner]),
 			});
 		};
 		DistEntry::Occupied(OccupiedDistEntry {
+			owners: dist.owners.clone(),
 			distributions: self,
 			idx,
-			owner,
 		})
 	}
-	fn extend(&mut self, dist: FleetSecretDistribution) {
-		for owner in &dist.owners {
-			self.entry(owner.to_owned()).remove();
+	pub fn extend(&mut self, dist: FleetSecretDistribution, reason: String) {
+		for ele in self.distributions_mut() {
+			ele.prune_owners(&dist.owners, reason.clone());
 		}
-		self.0.push(dist);
+		self.stored.push(dist);
 	}
-	pub fn contains(&self, owner: &str) -> bool {
-		self.0.iter().any(|d| d.owners.contains(owner))
+	pub fn contains(&self, owner: &SecretOwner) -> bool {
+		self.distributions().any(|d| d.owners.contains(owner))
 	}
 }
 
 struct OccupiedDistEntry<'d> {
 	distributions: &'d mut FleetSecretDistributions,
 	idx: usize,
-	owner: String,
+	owners: BTreeSet<SecretOwner>,
 }
 impl<'d> OccupiedDistEntry<'d> {
-	fn remove(self) -> VacantDistEntry<'d> {
-		let dist = &mut self.distributions.0[self.idx];
-		assert!(
-			dist.owners.remove(&self.owner),
-			"entry exists, as we have its reference"
-		);
-		if dist.owners.is_empty() {
-			self.distributions.0.remove(self.idx);
+	fn remove(self, whole_dist: bool, reason: String) -> VacantDistEntry<'d> {
+		let dist = &mut self.distributions.stored[self.idx];
+		if whole_dist {
+			dist.prune(reason);
+		} else {
+			dist.prune_owners(&self.owners, reason);
 		}
 		VacantDistEntry {
 			distributions: self.distributions,
-			owner: self.owner,
+			owners: self.owners,
 		}
 	}
-	fn set(self, secret: FleetSecretData) -> Self {
-		self.remove().set(secret)
+	fn set(self, secret: FleetSecretData, reason: String) -> Self {
+		self.remove(false, reason).set(secret)
 	}
 }
 struct VacantDistEntry<'d> {
 	distributions: &'d mut FleetSecretDistributions,
-	owner: String,
+	owners: BTreeSet<SecretOwner>,
 }
 impl<'d> VacantDistEntry<'d> {
 	fn set(self, secret: FleetSecretData) -> OccupiedDistEntry<'d> {
 		let Self {
 			distributions,
-			owner,
+			owners,
 		} = self;
-		let idx = distributions.0.len();
-		distributions.0.push(FleetSecretDistribution {
-			owners: BTreeSet::from_iter([owner.clone()]),
+		let idx = distributions.stored.len();
+		distributions.stored.push(FleetSecretDistribution {
+			owners: owners.clone(),
 			secret,
 
+			owners_pending_prune: BTreeMap::new(),
+			pending_prune: None,
 			_deprecated_managed: true,
 		});
 		OccupiedDistEntry {
 			distributions,
-			owner,
+			owners,
 			idx,
 		}
 	}
@@ -262,16 +568,16 @@ enum DistEntry<'d> {
 	Occupied(OccupiedDistEntry<'d>),
 }
 impl DistEntry<'_> {
-	fn remove(self) -> Self {
+	fn remove(self, whole_dist: bool, reason: String) -> Self {
 		match self {
 			DistEntry::Vacant(_) => self,
-			DistEntry::Occupied(o) => Self::Vacant(o.remove()),
+			DistEntry::Occupied(o) => Self::Vacant(o.remove(whole_dist, reason)),
 		}
 	}
-	fn set(self, secret: FleetSecretData) -> Self {
+	fn set(self, secret: FleetSecretData, reason: String) -> Self {
 		Self::Occupied(match self {
 			DistEntry::Vacant(e) => e.set(secret),
-			DistEntry::Occupied(e) => e.set(secret),
+			DistEntry::Occupied(e) => e.set(secret, reason),
 		})
 	}
 }
@@ -281,8 +587,13 @@ impl Serialize for FleetSecretDistributions {
 	where
 		S: serde::Serializer,
 	{
+		let mut v = self.clone();
+		v.prune_dead();
 		let mut found_hosts = BTreeSet::new();
-		for ele in self.0.iter() {
+		for ele in v.distributions() {
+			if ele.pending_prune.is_some() {
+				continue;
+			}
 			if ele.owners.is_empty() {
 				panic!("consistency: secret distribution has no defined owners");
 			}
@@ -294,10 +605,15 @@ impl Serialize for FleetSecretDistributions {
 				}
 			}
 		}
-		match self.0.len() {
+		match v.stored.len() {
 			0 => panic!("consistency: empty distributions"),
-			1 => self.0[0].serialize(serializer),
-			_ => self.0.serialize(serializer),
+			1 => v.stored[0].serialize(serializer),
+			_ => {
+				let mut sorted = v.stored.clone();
+				// Store outdated distributions last
+				sorted.sort_by_key(|v| v.pending_prune.is_some() as u32);
+				sorted.serialize(serializer)
+			}
 		}
 	}
 }
@@ -313,15 +629,18 @@ impl<'de> Deserialize<'de> for FleetSecretDistributions {
 			Many(Vec<FleetSecretDistribution>),
 		}
 		let d = Distributions::deserialize(deserializer)?;
-		let ds = match d {
+		let stored = match d {
 			Distributions::One(d) => vec![d],
 			Distributions::Many(ds) => ds,
 		};
-		if ds.is_empty() {
+		if stored.is_empty() {
 			return Err(de::Error::custom("consistency: empty distributions"));
 		}
 		let mut found_hosts = BTreeSet::new();
-		for ele in ds.iter() {
+		for ele in stored.iter() {
+			if ele.pending_prune.is_some() {
+				continue;
+			}
 			if ele.owners.is_empty() {
 				return Err(de::Error::custom(
 					"consistency: secret distribution has no defined owners",
@@ -335,73 +654,65 @@ impl<'de> Deserialize<'de> for FleetSecretDistributions {
 				}
 			}
 		}
-		Ok(Self(ds))
+		Ok(Self { stored })
 	}
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Deserialize, Default)]
 pub struct FleetSecrets(BTreeMap<String, FleetSecretDistributions>);
+
+impl Serialize for FleetSecrets {
+	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+	where
+		S: serde::Serializer,
+	{
+		let data: BTreeMap<String, FleetSecretDistributions> = self
+			.0
+			.iter()
+			.filter(|(_, v)| !v.stored.is_empty())
+			.map(|(k, v)| (k.clone(), v.clone()))
+			.collect();
+
+		data.serialize(serializer)
+	}
+}
 
 impl FleetSecrets {
 	pub fn keys(&self) -> btree_map::Keys<String, FleetSecretDistributions> {
 		self.0.keys()
 	}
 
-	pub fn keys_for_owner(&self, owner: &str) -> impl Iterator<Item = &String> {
+	pub fn keys_for_owner(&self, owner: &SecretOwner) -> impl Iterator<Item = &String> {
 		self.0
 			.iter()
 			.filter(|(_, d)| d.contains(owner))
 			.map(|(n, _)| n)
 	}
 
-	pub fn drop_owner_no_reencrypt(&mut self, secret: &str, owner: &str) -> bool {
-		let Entry::Occupied(mut dists) = self.0.entry(secret.to_owned()) else {
-			return false;
-		};
-		let DistEntry::Occupied(dist) = dists.get_mut().entry(owner.to_owned()) else {
-			return false;
-		};
-
-		dist.remove();
-
-		if dists.get().0.is_empty() {
-			dists.remove();
-		};
-
-		true
-	}
-	pub fn set_single_data(&mut self, secret: String, owner: String, data: FleetSecretData) {
-		let e = self
-			.0
-			.entry(secret.to_owned())
-			.or_insert_with(|| FleetSecretDistributions(Default::default()));
-		e.entry(owner.to_owned()).set(data);
-	}
 	pub fn set_data(&mut self, secret: String, data: FleetSecretDistribution) {
 		match self.0.entry(secret) {
 			Entry::Vacant(e) => {
-				e.insert(FleetSecretDistributions(vec![data]));
+				e.insert(FleetSecretDistributions { stored: vec![data] });
 			}
 			Entry::Occupied(mut e) => {
 				let dists = e.get_mut();
-				dists.extend(data)
+				dists.extend(data, "secret data was replaced".to_owned())
 			}
 		}
-	}
-	pub fn get_single(&self, secret: &str, owner: &str) -> Option<&FleetSecretDistribution> {
-		let secret = self.0.get(secret)?;
-		secret.get(owner)
 	}
 	pub fn get(&self, secret: &str) -> Option<&FleetSecretDistributions> {
 		self.0.get(secret)
 	}
-
-	pub fn contains_for_owner(&self, secret: &str, owner: &str) -> bool {
-		let Some(secret) = self.0.get(secret) else {
-			return false;
-		};
-		secret.contains(owner)
+	pub fn get_mut(&mut self, secret: &str) -> Option<&mut FleetSecretDistributions> {
+		self.0.get_mut(secret)
 	}
+
+	pub fn get_or_create(&mut self, secret: &str) -> &mut FleetSecretDistributions {
+		self.0
+			.entry(secret.to_owned())
+			.or_insert(FleetSecretDistributions::default())
+	}
+
 	pub fn contains(&self, secret: &str) -> bool {
 		self.0.contains_key(secret)
 	}
@@ -411,7 +722,7 @@ impl FleetSecrets {
 
 	fn merge_from_hosts(
 		&mut self,
-		host_secrets: BTreeMap<String, BTreeMap<String, FleetSecretDistribution>>,
+		host_secrets: BTreeMap<SecretOwner, BTreeMap<String, FleetSecretDistribution>>,
 	) {
 		for (host, host_secrets) in host_secrets {
 			for (secret_name, mut secret_data) in host_secrets {
@@ -420,15 +731,54 @@ impl FleetSecrets {
 			}
 		}
 	}
+
+	pub fn prune_host(&mut self, host: &SecretOwner, expected_nonshared: BTreeSet<String>) {
+		for (name, dists) in self.0.iter_mut() {
+			if expected_nonshared.contains(name) {
+				continue;
+			}
+			for dist in dists.distributions_mut() {
+				if dist.owners.contains(host) {
+					dist.prune_owners(
+						&BTreeSet::from([host.to_owned()]),
+						"host no longer defines this secret".to_owned(),
+					);
+				}
+			}
+		}
+	}
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Expectations {
-	pub owners: BTreeSet<String>,
+	pub owners: BTreeSet<SecretOwner>,
 	pub generation_data: serde_json::Value,
 	pub parts: BTreeMap<String, GeneratorPart>,
 }
 #[derive(Deserialize, Debug, Clone)]
 pub struct GeneratorPart {
 	pub encrypted: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RegenerationConstraints {
+	pub allow_different: bool,
+	pub regenerate_on_owner_added: bool,
+	pub regenerate_on_owner_removed: bool,
+}
+impl RegenerationConstraints {
+	pub fn host_personal() -> Self {
+		Self {
+			allow_different: false,
+			regenerate_on_owner_added: true,
+			regenerate_on_owner_removed: true,
+		}
+	}
+	pub fn without_preferences(self) -> Self {
+		Self {
+			allow_different: self.allow_different,
+			regenerate_on_owner_added: false,
+			regenerate_on_owner_removed: false,
+		}
+	}
 }

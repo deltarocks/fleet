@@ -4,7 +4,7 @@ pub(crate) mod cmds;
 // pub(crate) mod command;
 pub(crate) mod extra_args;
 
-use std::{env, ffi::OsString, process::ExitCode};
+use std::{env, ffi::OsString, process::ExitCode, sync::Arc};
 
 use anyhow::{Result, bail};
 use clap::{CommandFactory, Parser};
@@ -23,7 +23,9 @@ use futures::{TryStreamExt, future::LocalBoxFuture, stream::FuturesUnordered};
 use human_repr::HumanCount;
 #[cfg(feature = "indicatif")]
 use indicatif::{ProgressState, ProgressStyle};
-use nix_eval::{gc_register_my_thread, gc_unregister_my_thread, init_libraries};
+use nix_eval::{
+	gc_register_my_thread, gc_unregister_my_thread, init_libraries, init_tokio_for_nix,
+};
 use tracing::{Instrument, error, info, info_span};
 #[cfg(feature = "indicatif")]
 use tracing_indicatif::IndicatifLayer;
@@ -39,9 +41,9 @@ impl Prefetch {
 			info!("nothing to prefetch: no prefetch directory");
 			return Ok(());
 		}
-		let tasks = <FuturesUnordered<LocalBoxFuture<Result<()>>>>::new();
+		let tasks = FuturesUnordered::new();
 		for entry in std::fs::read_dir(&prefetch_dir)? {
-			tasks.push(Box::pin(async {
+			tasks.push(async {
 				let entry = entry?;
 				if !entry.metadata()?.is_file() {
 					bail!("only files should exist in prefetch directory");
@@ -59,7 +61,7 @@ impl Prefetch {
 				status.arg("store").arg("prefetch-file").arg(path);
 				status.run_nix_string().instrument(span).await?;
 				Ok(())
-			}));
+			});
 		}
 		tasks.try_collect::<Vec<()>>().await?;
 		Ok(())
@@ -190,7 +192,7 @@ fn main() -> ExitCode {
 
 	init_libraries();
 
-	tokio::runtime::Builder::new_multi_thread()
+	let runtime = tokio::runtime::Builder::new_multi_thread()
 		.enable_all()
 		.on_thread_start(|| {
 			gc_register_my_thread();
@@ -199,8 +201,13 @@ fn main() -> ExitCode {
 			gc_unregister_my_thread();
 		})
 		.build()
-		.expect("failed to build runtime")
-		.block_on(async {
+		.expect("failed to build runtime");
+	let runtime = Arc::new(runtime);
+
+	init_tokio_for_nix(runtime.clone());
+
+	runtime.block_on(async {
+		tokio::task::spawn(async move {
 			if let Err(e) = main_real(opts).await {
 				error!("{e:#}");
 				ExitCode::FAILURE
@@ -208,6 +215,9 @@ fn main() -> ExitCode {
 				ExitCode::SUCCESS
 			}
 		})
+		.await
+		.expect("primary task panicked")
+	})
 	// async_main(opts)
 }
 
