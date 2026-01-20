@@ -61,7 +61,7 @@ async fn build_task(config: Config, hostname: String, build_attr: &str) -> Resul
 impl BuildSystems {
 	pub async fn run(self, config: &Config, opts: &FleetOpts) -> Result<()> {
 		let hosts = opts.filter_skipped(config.list_hosts()?)?;
-		let mut tasks = FuturesUnordered::new();
+		let tasks = FuturesUnordered::new();
 		let build_attr = self.build_attr.clone();
 		for host in hosts {
 			let config = config.clone();
@@ -89,7 +89,7 @@ impl BuildSystems {
 				.instrument(span),
 			);
 		}
-		for _task in tasks.next().await {}
+		tasks.collect::<Vec<()>>().await;
 		Ok(())
 	}
 }
@@ -171,7 +171,7 @@ impl Deploy {
 				.instrument(span),
 			);
 		}
-		for _task in tasks.next().await {}
+		tasks.collect::<Vec<()>>().await;
 		Ok(())
 	}
 }
