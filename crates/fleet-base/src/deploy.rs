@@ -259,31 +259,11 @@ pub async fn upload_task(
 	location: GenerationStorage,
 	generation: PathBuf,
 ) -> Result<PathBuf> {
-	let local_host = config.local_host();
 	if matches!(location, GenerationStorage::Pusher) {
 		bail!("pusher is not enabled in this version of fleet");
 	}
 	if !host.local {
 		info!("uploading system closure");
-		{
-			// TODO: Move to remote_derivation method.
-			// Alternatively, nix store make-content-addressed can be used,
-			// at least for the first deployment, to provide trusted store key.
-			//
-			// It is much slower, yet doesn't require root on the deployer machine.
-			let Ok(mut sign) = local_host.cmd("nix").await else {
-				bail!("failed to setup local");
-			};
-			// Private key for host machine is registered in nix-sign.nix
-			sign.arg("store")
-				.arg("sign")
-				.comparg("--key-file", "/etc/nix/private-key")
-				.arg("-r")
-				.arg(&generation);
-			if let Err(e) = sign.sudo().run_nix().await {
-				warn!("failed to sign store paths: {e}");
-			};
-		}
 		let mut tries = 0;
 		loop {
 			match host.remote_derivation(&generation).await {

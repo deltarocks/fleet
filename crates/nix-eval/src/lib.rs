@@ -308,7 +308,6 @@ impl ThreadState {
 }
 
 static GLOBAL_STATE: LazyLock<GlobalState> = LazyLock::new(|| {
-	info!("initializing nix global state");
 	GlobalState::new().expect("global state init shouldn't fail")
 });
 

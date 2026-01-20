@@ -456,6 +456,20 @@ impl ConfigHost {
 			// Path is located locally, thus already trusted.
 			return Ok(path.to_owned());
 		}
+		let mut sign = MyCommand::new(
+			// TODO: Look at the current escalation strategy.
+			// ... or switch to run0 right after polkit update
+			EscalationStrategy::Sudo,
+			"nix",
+		);
+		sign.arg("store")
+			.arg("sign")
+			.comparg("--key-file", "/etc/nix/private-key")
+			.arg("-r")
+			.arg(&path);
+		if let Err(e) = sign.sudo().run_nix().await {
+			warn!("failed to sign store paths: {e}");
+		}
 		let mut nix = MyCommand::new(
 			// Not used
 			EscalationStrategy::Su,
