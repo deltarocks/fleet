@@ -17,8 +17,7 @@ use cmds::{
 	tf::Tf,
 };
 use fleet_base::{host::Config, opts::FleetOpts};
-use futures::{TryStreamExt, future::LocalBoxFuture, stream::FuturesUnordered};
-// use host::Config;
+use futures::{TryStreamExt, stream::FuturesUnordered};
 #[cfg(feature = "indicatif")]
 use human_repr::HumanCount;
 #[cfg(feature = "indicatif")]

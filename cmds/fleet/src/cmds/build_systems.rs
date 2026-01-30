@@ -73,7 +73,7 @@ impl BuildSystems {
 					let built = match build_task(config, hostname.clone(), &build_attr).await {
 						Ok(path) => path,
 						Err(e) => {
-							error!("failed to deploy host: {}", e);
+							error!("failed to deploy host: {:?}", e);
 							return;
 						}
 					};
