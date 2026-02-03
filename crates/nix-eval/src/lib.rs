@@ -307,9 +307,8 @@ impl ThreadState {
 	}
 }
 
-static GLOBAL_STATE: LazyLock<GlobalState> = LazyLock::new(|| {
-	GlobalState::new().expect("global state init shouldn't fail")
-});
+static GLOBAL_STATE: LazyLock<GlobalState> =
+	LazyLock::new(|| GlobalState::new().expect("global state init shouldn't fail"));
 
 thread_local! {
 	static THREAD_STATE: RefCell<ThreadState> = RefCell::new(ThreadState::new().expect("thread state init shouldn't fail"));
@@ -965,7 +964,9 @@ pub fn await_in_nix<F: Send + 'static>(f: impl Future<Output = F> + Send + 'stat
 	let runtime = TOKIO_FOR_NIX
 		.get()
 		.expect("init_tokio_for_nix was not called");
-	std::thread::spawn(move || runtime.block_on(f)).join().expect("await_in_nix inner thread panicked")
+	std::thread::spawn(move || runtime.block_on(f))
+		.join()
+		.expect("await_in_nix inner thread panicked")
 }
 
 unsafe extern "C" fn nix_primop_closure_adapter<const N: usize>(

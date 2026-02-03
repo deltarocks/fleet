@@ -142,7 +142,7 @@ in
         List of shared secrets, for which the current host was specified as `expectedOwners`
       '';
       type = listOf str;
-      default = [];
+      default = [ ];
       internal = true;
     };
     secrets = mkOption {
@@ -189,10 +189,7 @@ in
       {
         assertion =
           (secret.definition.generator == "shared") == hasSharedDefinition
-          && (
-            hasSharedDefinition
-            -> (elem host.name fleetConfiguration.secrets.${name}.expectedOwners)
-          );
+          && (hasSharedDefinition -> (elem host.name fleetConfiguration.secrets.${name}.expectedOwners));
         message =
           if hasSharedDefinition then
             "secret ${name} has host-specific secret generator, secrets with host-specific generators can not have shared generator in fleet configuration"

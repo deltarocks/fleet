@@ -83,9 +83,13 @@ in
     };
   };
   config = {
-    nixos = {host, ...}: {
-      _providedSharedSecrets = filter (name: elem host.name config.secrets.${name}.expectedOwners) (attrNames config.secrets);
-    };
+    nixos =
+      { host, ... }:
+      {
+        _providedSharedSecrets = filter (name: elem host.name config.secrets.${name}.expectedOwners) (
+          attrNames config.secrets
+        );
+      };
     nixpkgs.overlays = [
       (final: prev: {
         mkSecretGenerators =
