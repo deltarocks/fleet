@@ -349,27 +349,23 @@ async fn run_nix_inner_raw(
 	let mut out_buf = if want_stdout { Some(vec![]) } else { None };
 	loop {
 		select! {
-			e = err.next() => {
-				if let Some(e) = e {
-					let e = e?;
-					err_handler.handle_line(&e);
-				}
+			biased;
+
+			Some(e) = err.next() => {
+				let e = e?;
+				err_handler.handle_line(&e);
 			},
-			o = ob.next() => {
-				if let Some(o) = o {
-					out_buf.as_mut().expect("stdout == wants_stdout").extend_from_slice(&o?);
-				}
+			Some(o) = ob.next() => {
+				out_buf.as_mut().expect("stdout == wants_stdout").extend_from_slice(&o?);
 			},
-			o = ol.next() => {
-				if let Some(o) = o {
-					let o = o?;
-					if let Some(out) = out_handler.as_mut() {
-						out.handle_line(&o)
-					} else {
-						err_handler.handle_line(&o)
-					}
-					// out_handler.handle_info(&o);
+			Some(o) = ol.next() => {
+				let o = o?;
+				if let Some(out) = out_handler.as_mut() {
+					out.handle_line(&o)
+				} else {
+					err_handler.handle_line(&o)
 				}
+				// out_handler.handle_info(&o);
 			},
 			code = child.wait() => {
 				let code = code?;
@@ -414,27 +410,23 @@ async fn run_nix_inner_raw_ssh(
 	let mut wait_future = pin::pin!(child.wait());
 	loop {
 		select! {
-			e = err.next() => {
-				if let Some(e) = e {
-					let e = e?;
-					err_handler.handle_line(&e);
-				}
+			biased;
+
+			Some(e) = err.next() => {
+				let e = e?;
+				err_handler.handle_line(&e);
 			},
-			o = ob.next() => {
-				if let Some(o) = o {
-					out_buf.as_mut().expect("stdout == wants_stdout").extend_from_slice(&o?);
-				}
+			Some(o) = ob.next() => {
+				out_buf.as_mut().expect("stdout == wants_stdout").extend_from_slice(&o?);
 			},
-			o = ol.next() => {
-				if let Some(o) = o {
-					let o = o?;
-					if let Some(out) = out_handler.as_mut() {
-						out.handle_line(&o)
-					} else {
-						err_handler.handle_line(&o)
-					}
-					// out_handler.handle_info(&o);
+			Some(o) = ol.next() => {
+				let o = o?;
+				if let Some(out) = out_handler.as_mut() {
+					out.handle_line(&o)
+				} else {
+					err_handler.handle_line(&o)
 				}
+				// out_handler.handle_info(&o);
 			},
 			code = &mut wait_future => {
 				let code = code?;
