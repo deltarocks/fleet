@@ -46,6 +46,14 @@ use self::nix_raw::{
 pub mod logging;
 #[doc(hidden)]
 pub mod macros;
+
+#[doc(hidden)]
+pub mod __macro_support {
+	pub use std::collections::hash_map::HashMap;
+
+	pub use anyhow::Context;
+	pub use tokio::task::block_in_place;
+}
 pub mod util;
 
 #[allow(

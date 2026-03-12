@@ -18,12 +18,12 @@ macro_rules! nix_expr_inner {
 	(@obj($o:ident)) => {{}};
 	(Obj { }) => {{
 		use $crate::{nix_expr_inner};
-		let out = std::collections::hash_map::HashMap::new();
+		let out = $crate::__macro_support::HashMap::new();
 		Value::new_attrs(out)
 	}};
 	(Obj { $($tt:tt)+ }) => {{
 		use $crate::{nix_expr_inner};
-		let mut out = std::collections::hash_map::HashMap::new();
+		let mut out = $crate::__macro_support::HashMap::new();
 		nix_expr_inner!(@obj(out) $($tt)*);
 		Value::new_attrs(out)
 	}};
@@ -68,25 +68,25 @@ macro_rules! nix_expr {
 #[macro_export]
 macro_rules! nix_go {
 	(@o($o:expr, $path:expr) . $var:ident $($tt:tt)*) => {{
-		nix_go!(@o(tokio::task::block_in_place(|| $o.get_field(stringify!($var))).context(concat!("getting nested ", $path))?, $path) $($tt)*)
+		nix_go!(@o($crate::__macro_support::block_in_place(|| $o.get_field(stringify!($var))).context(concat!("getting nested ", $path))?, $path) $($tt)*)
 	}};
 	(@o($o:expr, $path:expr) [ $v:expr ] $($tt:tt)*) => {{
-		nix_go!(@o(tokio::task::block_in_place(|| $o.get_field($v)).context(concat!("getting nested ", $path))?, $path) $($tt)*)
+		nix_go!(@o($crate::__macro_support::block_in_place(|| $o.get_field($v)).context(concat!("getting nested ", $path))?, $path) $($tt)*)
 	}};
 	(@o($o:expr, $path:expr) ($($var:tt)*) $($tt:tt)*) => {
-		nix_go!(@o(tokio::task::block_in_place(|| $o.call($crate::nix_expr_inner!($($var)+))).context(concat!("getting nested ", $path))?, $path) $($tt)*)
+		nix_go!(@o($crate::__macro_support::block_in_place(|| $o.call($crate::nix_expr_inner!($($var)+))).context(concat!("getting nested ", $path))?, $path) $($tt)*)
 	};
 	(@o($o:expr, $path:expr)) => {$o};
 	($field:ident $($tt:tt)+) => {{
 		use $crate::nix_go;
-		use ::anyhow::Context;
+		use $crate::__macro_support::Context;
 		let out = $field.clone();
-		nix_go!(@o(out, ::std::stringify!($($tt)*)) $($tt)*)
+		nix_go!(@o(out, stringify!($($tt)*)) $($tt)*)
 	}}
 }
 #[macro_export]
 macro_rules! nix_go_json {
 	($($tt:tt)*) => {{
-		tokio::task::block_in_place(|| $crate::nix_go!($($tt)*).as_json())?
+		$crate::__macro_support::block_in_place(|| $crate::nix_go!($($tt)*).as_json())?
 	}};
 }
