@@ -6,10 +6,10 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-axum = { version = "0.8.7", features = ["http2", "macros", "ws"] }
-axum-extra = { version = "0.12.2", features = ["typed-header"] }
-futures-util = { version = "0.3.31", features = ["sink"] }
-hyper = "1.8.1"
+axum.workspace = true
+axum-extra.workspace = true
+futures-util.workspace = true
+hyper.workspace = true
 tokio = { workspace = true, features = ["macros", "process", "rt"] }
-tokio-util = { version = "0.7.17", features = ["io"] }
+tokio-util = { workspace = true, features = ["io"] }
 tracing.workspace = true

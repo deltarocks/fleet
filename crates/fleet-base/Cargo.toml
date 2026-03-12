@@ -8,25 +8,25 @@ rust-version.workspace = true
 age.workspace = true
 anyhow.workspace = true
 better-command.workspace = true
-chrono = { version = "0.4.41", features = ["serde"] }
+chrono.workspace = true
 clap = { workspace = true, features = ["derive"] }
 fleet-shared.workspace = true
-futures = "0.3.31"
-hostname = "0.4.1"
-indoc = "2.0.6"
-itertools = "0.14.0"
+futures.workspace = true
+hostname.workspace = true
+indoc.workspace = true
+itertools.workspace = true
 nix-eval.workspace = true
 nixlike.workspace = true
-nom = "8.0.0"
-openssh = "0.11.5"
-rand = "0.9.1"
+nom.workspace = true
+openssh.workspace = true
+rand.workspace = true
 serde.workspace = true
-serde_json = "1.0.140"
-tabled = "0.20.0"
+serde_json.workspace = true
+tabled.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
-time = { version = "0.3.41", features = ["parsing"] }
+time = { workspace = true, features = ["parsing"] }
 tokio.workspace = true
-tokio-util = { version = "0.7.15", features = ["codec"] }
-toml_edit = "0.23.7"
+tokio-util = { workspace = true, features = ["codec"] }
+toml_edit.workspace = true
 tracing.workspace = true

@@ -13,17 +13,17 @@ serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
-cxx = "1.0.168"
-itertools = "0.14.0"
-test-log = { version = "0.2.18", features = ["trace"] }
+cxx.workspace = true
+itertools.workspace = true
+test-log.workspace = true
 tokio.workspace = true
-tracing-indicatif = { version = "0.3.13", optional = true }
-vte = { version = "0.15.0", features = ["ansi"] }
+tracing-indicatif = { workspace = true, optional = true }
+vte.workspace = true
 
 [build-dependencies]
-bindgen = "0.72.0"
-cxx-build = "1.0.168"
-pkg-config = "0.3.30"
+bindgen.workspace = true
+cxx-build.workspace = true
+pkg-config.workspace = true
 
 [features]
 indicatif = ["dep:tracing-indicatif"]

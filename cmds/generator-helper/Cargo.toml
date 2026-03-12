@@ -10,8 +10,8 @@ anyhow.workspace = true
 clap.workspace = true
 fleet-shared.workspace = true
 
-base64 = "0.22.1"
-ed25519-dalek = { version = "2.1" }
-hex = "0.4.3"
-rand = "0.9.1"
-x25519-dalek = { version = "2.0.1", features = ["getrandom"] }
+base64.workspace = true
+ed25519-dalek.workspace = true
+hex.workspace = true
+rand.workspace = true
+x25519-dalek.workspace = true
