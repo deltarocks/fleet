@@ -4,10 +4,11 @@ use std::{
 	path::PathBuf,
 };
 
-use anyhow::{Result, bail, ensure};
+use anyhow::{Context as _, Result, anyhow, bail, ensure};
 use clap::Parser;
-use fleet_base::{host::Config, opts::FleetOpts};
+use fleet_base::{fleetdata::SecretOwner, host::Config, opts::FleetOpts};
 use fleet_shared::SecretData;
+use itertools::{ExactlyOneError, Itertools as _};
 use tokio::fs::read;
 use tracing::{info, warn};
 
@@ -67,84 +68,6 @@ pub enum Secret {
 	},
 }
 
-async fn parse_public(
-	public: Option<String>,
-	public_file: Option<PathBuf>,
-) -> Result<Option<SecretData>> {
-	Ok(match (public, public_file) {
-		(Some(v), None) => Some(SecretData {
-			data: v.into(),
-			encrypted: false,
-		}),
-		(None, Some(v)) => Some(SecretData {
-			data: read(v).await?,
-			encrypted: false,
-		}),
-		(Some(_), Some(_)) => {
-			bail!("only public or public_file should be set")
-		}
-		(None, None) => None,
-	})
-}
-
-async fn parse_secret() -> Result<Option<Vec<u8>>> {
-	let mut input = vec![];
-	stdin().read_to_end(&mut input)?;
-	if input.is_empty() {
-		Ok(None)
-	} else {
-		Ok(Some(input))
-	}
-}
-
-fn parse_machines(
-	initial: BTreeSet<String>,
-	machines: Option<Vec<String>>,
-	mut add_machines: Vec<String>,
-	mut remove_machines: Vec<String>,
-) -> Result<BTreeSet<String>> {
-	if machines.is_none() && add_machines.is_empty() && remove_machines.is_empty() {
-		bail!("no operation");
-	}
-
-	let initial_machines = initial.clone();
-	let mut target_machines = initial;
-	info!("Currently encrypted for {initial_machines:?}");
-
-	if let Some(machines) = machines {
-		ensure!(
-			add_machines.is_empty() && remove_machines.is_empty(),
-			"can't combine --machines and --add-machines/--remove-machines"
-		);
-		let target = initial_machines.iter().collect::<HashSet<_>>();
-		let source = machines.iter().collect::<HashSet<_>>();
-		for removed in target.difference(&source) {
-			remove_machines.push((*removed).clone());
-		}
-		for added in source.difference(&target) {
-			add_machines.push((*added).clone());
-		}
-	}
-
-	for machine in &remove_machines {
-		if !target_machines.remove(machine) {
-			warn!("secret is not enabled for {machine}");
-		}
-	}
-	for machine in &add_machines {
-		if !target_machines.insert(machine.to_owned()) {
-			warn!("secret is already added to {machine}");
-		}
-	}
-	if !remove_machines.is_empty() {
-		// TODO: maybe force secret regeneration?
-		// Not that useful without revokation.
-		warn!(
-			"secret will not be regenerated for removed machines, and until host rebuild, they will still possess the ability to decode secret"
-		);
-	}
-	Ok(target_machines)
-}
 impl Secret {
 	pub async fn run(self, config: &Config, opts: &FleetOpts) -> Result<()> {
 		match self {
@@ -162,6 +85,32 @@ impl Secret {
 				part: part_name,
 				mut prefer_identities,
 			} => {
+				let secret = config.data.secrets.read().expect("not poisoned");
+
+				let Some(dist) = secret.get("name") else {
+					bail!("secret doesn't exists");
+				};
+
+				let dist = if let Some(machine) = &machine {
+					dist.get(&SecretOwner::host(machine))
+						.ok_or_else(|| anyhow!("machine {machine} has no secret generated"))?
+				} else {
+					dist.distributions()
+						.exactly_one()
+						.map_err(|e| anyhow!("{e}"))
+						.context(
+							"with no machine specified, there should be exactly one distribution",
+						)?
+				};
+
+				let part_name = part_name.unwrap_or_else(|| "secret".to_string());
+				let Some(part) = dist.secret.parts.get(&part_name) else {
+					bail!("secret part {part_name:?} is not defined");
+				};
+
+				// dist.get(SecretOwner(name));
+
+				todo!();
 				/*
 				let Some(secret) = config.shared_secret(&name) else {
 					bail!("secret doesn't exists");
