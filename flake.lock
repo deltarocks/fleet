@@ -2,10 +2,10 @@
   "nodes": {
     "crane": {
       "locked": {
-        "lastModified": 1768700043,
+        "lastModified": 1773189535,
         "owner": "ipetkov",
         "repo": "crane",
-        "rev": "935de8bd6838d940988bb065be2a2034259327b9",
+        "rev": "6fa2fb4cf4a89ba49fc9dd5a3eb6cde99d388269",
         "type": "github"
       },
       "original": {
@@ -37,10 +37,10 @@
         ]
       },
       "locked": {
-        "lastModified": 1768135262,
+        "lastModified": 1772408722,
         "owner": "hercules-ci",
         "repo": "flake-parts",
-        "rev": "80daad04eddbbf5a4d883996a73f3f542fa437ac",
+        "rev": "f20dc5d9b8027381c474144ecabc9034d6a839a3",
         "type": "github"
       },
       "original": {
@@ -126,10 +126,10 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1768697925,
+        "lastModified": 1773268153,
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "665062f7df2c7db8fdbbec4f1b730091143828a3",
+        "rev": "63ca4f465b79edbaa9ff113ea7ff48fb49ea0db0",
         "type": "github"
       },
       "original": {
@@ -190,10 +190,10 @@
         ]
       },
       "locked": {
-        "lastModified": 1768617670,
+        "lastModified": 1773216618,
         "owner": "oxalica",
         "repo": "rust-overlay",
-        "rev": "56d0fbdd732f3686e8414b857cf885038fc17d57",
+        "rev": "07d7dc6fcc5eae76b4fb0e19d4afd939437bec97",
         "type": "github"
       },
       "original": {
@@ -223,10 +223,10 @@
         ]
       },
       "locked": {
-        "lastModified": 1768158989,
+        "lastModified": 1772660329,
         "owner": "numtide",
         "repo": "treefmt-nix",
-        "rev": "e96d59dff5c0d7fddb9d113ba108f03c3ef99eca",
+        "rev": "3710e0e1218041bbad640352a0440114b1e10428",
         "type": "github"
       },
       "original": {
