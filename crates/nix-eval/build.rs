@@ -37,12 +37,10 @@ fn main() {
 	cxx_build::bridge("src/logging.rs")
 		.file("src/logging.cc")
 		.std("c++23")
-		.shared_flag(true)
 		.compile("nix-eval-logging");
 	cxx_build::bridge("src/lib.rs")
 		.file("src/lib.cc")
 		.std("c++23")
-		.shared_flag(true)
 		.compile("nix-eval");
 
 	println!("cargo:rerun-if-changed=src/lib.cc");

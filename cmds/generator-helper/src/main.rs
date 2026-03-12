@@ -14,7 +14,7 @@ use clap::{Parser, ValueEnum};
 use ed25519_dalek::SecretKey;
 use fleet_shared::SecretData;
 use rand::{
-	RngCore,
+	Rng as _,
 	distr::{Alphanumeric, Distribution, SampleString, Uniform},
 	rng,
 };

@@ -325,9 +325,9 @@ pub fn init_primops() {
 				generate(config, expectations_, &generator, &default_generator_drv).await
 			})?;
 
-			dists.extend(generated.clone(), format!("secret was generated"));
+			dists.extend(generated.clone(), "secret was generated".to_string());
 
-			return Ok(secret_to_parts(&secret, &generated.secret.parts, &expectations.parts));
+			Ok(secret_to_parts(&secret, &generated.secret.parts, &expectations.parts))
 		},
 	)
 	.register();
