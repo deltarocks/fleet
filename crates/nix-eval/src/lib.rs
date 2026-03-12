@@ -13,7 +13,7 @@ use serde::de::DeserializeOwned;
 use std::mem::transmute;
 
 pub use anyhow::Result;
-use tracing::{Instrument, info, instrument, warn};
+use tracing::{Span, instrument, warn};
 
 use self::logging::{ErrorInfoBuilder, nix_logging_cxx};
 use self::nix_cxx::set_fetcher_setting;
@@ -26,8 +26,9 @@ use self::nix_raw::{
 	clear_err, copy_value, err_NIX_ERR_KEY, err_NIX_ERR_NIX_ERROR, err_NIX_ERR_OVERFLOW,
 	err_NIX_ERR_UNKNOWN, err_code, err_info_msg, err_msg, eval_state_build,
 	eval_state_builder_load, eval_state_builder_new, eval_state_builder_set_eval_setting,
-	expr_eval_from_string, fetchers_settings, fetchers_settings_free, fetchers_settings_new,
-	flake_lock, flake_lock_flags, flake_lock_flags_free, flake_lock_flags_new, flake_reference,
+	expr_eval_from_string, fetchers_settings,
+	fetchers_settings_free, fetchers_settings_new, flake_lock, flake_lock_flags,
+	flake_lock_flags_free, flake_lock_flags_new, flake_reference,
 	flake_reference_and_fragment_from_string, flake_reference_parse_flags,
 	flake_reference_parse_flags_free, flake_reference_parse_flags_new,
 	flake_reference_parse_flags_set_base_directory, flake_settings, flake_settings_free,
@@ -43,6 +44,7 @@ use self::nix_raw::{
 };
 
 // Contains macros helpers
+pub mod drv;
 pub mod logging;
 #[doc(hidden)]
 pub mod macros;
@@ -321,12 +323,26 @@ static GLOBAL_STATE: LazyLock<GlobalState> =
 thread_local! {
 	static THREAD_STATE: RefCell<ThreadState> = RefCell::new(ThreadState::new().expect("thread state init shouldn't fail"));
 }
-fn with_default_context<T>(f: impl FnOnce(*mut c_context, *mut c_eval_state) -> T) -> Result<T> {
+pub(crate) fn with_default_context<T>(f: impl FnOnce(*mut c_context, *mut c_eval_state) -> T) -> Result<T> {
 	let global = &GLOBAL_STATE.state;
 	let (ctx, state) = THREAD_STATE.with_borrow_mut(|w| (w.ctx.0, global.0));
 	let mut ctx = NixContext(ctx);
 	let v = ctx.run_in_context(|c| f(c, state));
 	// It is reused for thread
+	std::mem::forget(ctx);
+	v
+}
+
+/// Same as with_default_context, but also passes store...
+/// Yep, this code is garbage and needs to be refactored.
+pub(crate) fn with_store_context<T>(
+	f: impl FnOnce(*mut c_context, *mut c_store, *mut c_eval_state) -> T,
+) -> Result<T> {
+	let global = &GLOBAL_STATE;
+	let (ctx, store, state) =
+		THREAD_STATE.with_borrow_mut(|w| (w.ctx.0, global.store.0, global.state.0));
+	let mut ctx = NixContext(ctx);
+	let v = ctx.run_in_context(|c| f(c, store, state));
 	std::mem::forget(ctx);
 	v
 }
@@ -423,7 +439,7 @@ impl Drop for FlakeLockFlags {
 	}
 }
 
-unsafe extern "C" fn copy_nix_str(start: *const c_char, n: c_uint, user_data: *mut c_void) {
+pub(crate) unsafe extern "C" fn copy_nix_str(start: *const c_char, n: c_uint, user_data: *mut c_void) {
 	let s = unsafe { slice::from_raw_parts(start.cast::<u8>(), n as usize) };
 	let s = std::str::from_utf8(s).expect("c string has invalid utf-8");
 	unsafe { *user_data.cast::<String>() = s.to_owned() };
@@ -836,6 +852,7 @@ impl Value {
 		})?;
 		Ok(out)
 	}
+	#[instrument(name = "build", skip(self), fields(output))]
 	pub fn build(&self, output: &str) -> Result<PathBuf> {
 		if !self.is_derivation() {
 			bail!("expected derivation to build")
@@ -853,11 +870,19 @@ impl Value {
 		} else {
 			self.clone()
 		};
+
+		let drv_path = v
+			.get_field("drvPath")
+			.context("getting drvPath")?
+			.to_string()?;
+		let graph = drv::DrvGraph::resolve(&drv_path)?;
+		let _guard = logging::register_build_graph(&Span::current(), &graph);
+
 		// to_string here blocks until the path is built
 		let s = v.builtin_to_string()?;
 		let rs = s.to_realised_string()?;
-		let drv_path = rs.as_str().to_owned();
-		Ok(PathBuf::from(drv_path))
+		let out_path = rs.as_str().to_owned();
+		Ok(PathBuf::from(out_path))
 	}
 	pub fn as_json<T: DeserializeOwned>(&self) -> Result<T> {
 		let to_json = Self::eval("builtins.toJSON")?;
@@ -1103,10 +1128,18 @@ fn test_native() -> Result<()> {
 	let test_result: String = nix_go_json!(builtins.uppercaseSuffix2("test")("suffix"));
 	assert_eq!(test_result, "TESTsuffix");
 
-	let nix_ctx = NixContext::new();
-	let store = GLOBAL_STATE.store.parse_path(s.as_c_str())?;
-
-	// nix_raw::store_get_fs_closure(1);
+	let drv_path = nix_go!(attrs.packages["x86_64-linux"]["fleet-install-secrets"].drvPath)
+		.to_string()?;
+	let graph = drv::DrvGraph::resolve(&drv_path)?;
+	eprintln!(
+		"fleet-install-secrets dependency graph: {} nodes",
+		graph.nodes.len()
+	);
+	for (path, node) in &graph.nodes {
+		if !node.input_drvs.is_empty() {
+			eprintln!("  {} ({} deps)", node.name, node.input_drvs.len());
+		}
+	}
 
 	Ok(())
 }

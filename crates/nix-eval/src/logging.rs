@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Arguments;
 use std::sync::{LazyLock, Mutex};
 
@@ -285,6 +285,135 @@ impl Verbosity {
 static NIX_SPAN_MAPPING: LazyLock<Mutex<HashMap<u64, Span>>> =
 	LazyLock::new(|| Mutex::new(HashMap::new()));
 
+struct DrvGraphEntry {
+	name: String,
+	parent: Option<String>,
+	span: Option<Span>,
+	refcount: usize,
+}
+
+static DRV_GRAPH: LazyLock<Mutex<HashMap<String, DrvGraphEntry>>> =
+	LazyLock::new(|| Mutex::new(HashMap::new()));
+
+static ACTIVITY_TO_DRV: LazyLock<Mutex<HashMap<u64, String>>> =
+	LazyLock::new(|| Mutex::new(HashMap::new()));
+
+pub struct BuildGraphGuard {
+	paths: Vec<String>,
+}
+
+impl Drop for BuildGraphGuard {
+	fn drop(&mut self) {
+		let mut drv_graph = DRV_GRAPH.lock().expect("not poisoned");
+		for path in &self.paths {
+			if let Some(entry) = drv_graph.get_mut(path) {
+				entry.refcount -= 1;
+				if entry.refcount == 0 {
+					drv_graph.remove(path);
+				}
+			}
+		}
+	}
+}
+
+pub fn register_build_graph(parent: &Span, graph: &crate::drv::DrvGraph) -> BuildGraphGuard {
+	let mut drv_graph = DRV_GRAPH.lock().expect("not poisoned");
+	let mut paths = Vec::new();
+
+	drv_graph
+		.entry(graph.root.clone())
+		.and_modify(|e| e.refcount += 1)
+		.or_insert_with(|| DrvGraphEntry {
+			name: graph.nodes[&graph.root].name.clone(),
+			parent: None,
+			span: Some(parent.clone()),
+			refcount: 1,
+		});
+	paths.push(graph.root.clone());
+
+	let mut queue = VecDeque::new();
+	queue.push_back(graph.root.clone());
+
+	let mut visited = std::collections::HashSet::new();
+	visited.insert(graph.root.clone());
+
+	while let Some(path) = queue.pop_front() {
+		let Some(node) = graph.nodes.get(&path) else {
+			continue;
+		};
+		for dep_path in node.input_drvs.keys() {
+			if !visited.insert(dep_path.clone()) {
+				continue;
+			}
+			let Some(dep_node) = graph.nodes.get(dep_path) else {
+				continue;
+			};
+			if let Some(entry) = drv_graph.get_mut(dep_path) {
+				entry.refcount += 1;
+			} else {
+				drv_graph.insert(dep_path.clone(), DrvGraphEntry {
+					name: dep_node.name.clone(),
+					parent: Some(path.clone()),
+					span: None,
+					refcount: 1,
+				});
+			}
+			paths.push(dep_path.clone());
+			queue.push_back(dep_path.clone());
+		}
+	}
+
+	BuildGraphGuard { paths }
+}
+
+fn ensure_drv_span(drv_path: &str) -> Option<Span> {
+	let mut drv_graph = DRV_GRAPH.lock().expect("not poisoned");
+
+	if let Some(span) = drv_graph.get(drv_path).and_then(|e| e.span.clone()) {
+		return Some(span);
+	}
+
+	let mut chain = vec![];
+	let mut current = drv_path.to_owned();
+	loop {
+		let Some(entry) = drv_graph.get(&current) else {
+			break;
+		};
+		if entry.span.is_some() {
+			chain.push(current);
+			break;
+		}
+		chain.push(current.clone());
+		match &entry.parent {
+			Some(p) => current = p.clone(),
+			None => break,
+		}
+	}
+
+	if chain.is_empty() {
+		return None;
+	}
+
+	for i in (0..chain.len()).rev() {
+		let path = &chain[i];
+		if drv_graph.get(path).unwrap().span.is_some() {
+			continue;
+		}
+		let parent_span = chain
+			.get(i + 1)
+			.and_then(|p| drv_graph.get(p))
+			.and_then(|e| e.span.clone());
+		let name = drv_graph.get(path).unwrap().name.clone();
+		let span = {
+			let _enter = parent_span.as_ref().map(|s| s.enter());
+			info_span!(target: "nix::build", "building", drv = %name)
+		};
+		drv_graph.get_mut(path).unwrap().span = Some(span);
+	}
+
+	drv_graph.get(drv_path).and_then(|e| e.span.clone())
+}
+
 #[derive(Debug)]
 enum FieldValue {
 	Int(i32),
@@ -306,57 +435,33 @@ impl StartActivityBuilder {
 		self.fields.push(FieldValue::Str(v.to_string()));
 	}
 	fn emit(&mut self, parent: u64, s: &str) {
+		let graph_span = if matches!(self.typ, ActivityType::Build) {
+			self.fields.first().and_then(|f| match f {
+				FieldValue::Str(drv_path) => {
+					let clean = parse_path(drv_path);
+					let span = ensure_drv_span(clean);
+					if span.is_some() {
+						ACTIVITY_TO_DRV
+							.lock()
+							.expect("not poisoned")
+							.insert(self.activity_id, clean.to_owned());
+					}
+					span
+				}
+				_ => None,
+			})
+		} else {
+			None
+		};
+
 		let mut mapping = NIX_SPAN_MAPPING.lock().expect("not poisoned");
 
-		let parent = mapping.get(&parent);
-
-		// let meta = spans.alloc_metadata(
-		// 	self.typ.name(),
-		// 	self.verbosity.into(),
-		// 	MetadataKind::Span,
-		// 	"nix activity start",
-		// 	None,
-		// 	None,
-		// 	None,
-		// 	self.typ.fields(),
-		// );
-		//
-		// let mut fields = meta.fields().iter();
-		// let span = if let Some(parent) = parent {
-		// 	let s = Span::new(
-		// 		meta,
-		// 		&match meta.fields().len() {
-		// 			1 => meta.fields().value_set(
-		// 				&<[_; 1]>::try_from([(
-		// 					&fields.next().expect("has field"),
-		// 					Some(&format_args!("Test") as &dyn tracing::Value),
-		// 				)])
-		// 				.expect("valid size"),
-		// 			),
-		// 			_ => unreachable!(),
-		// 		},
-		// 	);
-		// 	s.follows_from(parent);
-		// 	s
-		// } else {
-		// 	Span::new_root(
-		// 		meta,
-		// 		&match meta.fields().len() {
-		// 			1 => meta.fields().value_set(
-		// 				&<[_; 1]>::try_from([(
-		// 					&fields.next().expect("has field"),
-		// 					Some(&format_args!("Test") as &dyn tracing::Value),
-		// 				)])
-		// 				.expect("valid size"),
-		// 			),
-		// 			_ => unreachable!(),
-		// 		},
-		// 	)
-		// };
-		//
-		// let id = span.id().expect("id created");
-
-		let span = {
+		let span = if let Some(span) = graph_span {
+			#[cfg(feature = "indicatif")]
+			span.pb_start();
+			span
+		} else {
+			let parent = mapping.get(&parent);
 			let _in_parent = parent.map(|p| p.enter());
 			let level: Level = self.verbosity.into();
 			if level == Level::ERROR {
@@ -380,7 +485,7 @@ impl StartActivityBuilder {
 			let s = ansi_filter(s);
 			#[cfg(feature = "indicatif")]
 			{
-				span.pb_set_message(s);
+				span.pb_set_message(&s);
 			}
 			let _e = span.enter();
 			let level: Level = self.verbosity.into();
@@ -454,8 +559,15 @@ fn emit_warn(v: &str) {
 	warn!(target: "nix::eval", "{v}")
 }
 fn emit_stop(v: u64) {
-	let mut mapping = NIX_SPAN_MAPPING.lock().expect("not poisoned");
-	mapping.remove(&v);
+	{
+		let mut mapping = NIX_SPAN_MAPPING.lock().expect("not poisoned");
+		mapping.remove(&v);
+	}
+	if let Some(drv_path) = ACTIVITY_TO_DRV.lock().expect("not poisoned").remove(&v) {
+		if let Some(entry) = DRV_GRAPH.lock().expect("not poisoned").get_mut(&drv_path) {
+			entry.span = None;
+		}
+	}
 }
 fn emit_log(lvl: u32, v: &[u8]) {
 	let verbosity = Verbosity::from_int(lvl);

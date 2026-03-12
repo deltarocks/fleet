@@ -18,6 +18,7 @@ fn main() {
 		"nix-util",
 		"nix-util-c",
 		"nix-store",
+		"nix-store-c",
 		"nix-expr",
 		"nix-flake",
 		"nix-fetchers",
@@ -71,6 +72,12 @@ fn main() {
 		.expect("nix-expr-c")
 		.include_paths
 		.into_iter()
+		.chain(
+			pkg_config::probe_library("nix-store-c")
+				.expect("nix-store-c")
+				.include_paths
+				.into_iter(),
+		)
 		.chain(
 			pkg_config::probe_library("nix-flake-c")
 				.expect("nix-flake-c")

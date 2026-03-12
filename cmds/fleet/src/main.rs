@@ -120,7 +120,8 @@ fn setup_logging() {
 	let indicatif_layer = {
 		use std::time::Duration;
 
-		IndicatifLayer::new().with_progress_style(
+		IndicatifLayer::new().with_max_progress_bars(10, Some(ProgressStyle::default_spinner()))
+			.with_progress_style(
 			ProgressStyle::with_template(
 				"{color_start}{span_child_prefix} {span_name}{{{span_fields}}}{color_end} {wide_msg} {color_start}{download_progress} {elapsed}{color_end}",
 			)
