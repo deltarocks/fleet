@@ -1,0 +1,13 @@
+[package]
+name = "prodash-layer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+futures.workspace = true
+futures-core = "0.3.32"
+prodash = { version = "31.0.0", features = ["render-tui", "render-tui-crossterm"] }
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
