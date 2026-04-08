@@ -170,6 +170,47 @@ rec {
         }
       );
 
+    mkAskFile =
+      {
+        header ? "",
+        part ? "secret",
+      }:
+      (
+        {
+          kdePackages,
+          coreutils,
+          mkImpureSecretGenerator,
+        }:
+        mkImpureSecretGenerator {
+          script = ''
+            mkdir $out
+            tmpfile=$(${coreutils}/bin/mktemp)
+            trap "${coreutils}/bin/rm -f $tmpfile" EXIT
+            cat > "$tmpfile" <<'HEADER'
+            ${header}
+            HEADER
+            ${kdePackages.kate}/bin/kate --startanon --new --block "$tmpfile"
+            gh private -o $out/${part} < "$tmpfile"
+          '';
+
+          parts.${part}.encrypted = true;
+        }
+      );
+
+    mkAskEnv =
+      {
+        header ? "",
+        variables ? [ ],
+        part ? "secret",
+      }:
+      mkAskFile {
+        inherit part;
+        header = builtins.concatStringsSep "\n" (
+          (map (l: "# ${l}") (lib.splitString "\n" header))
+          ++ (map (v: "${v}=") variables)
+        );
+      };
+
     /**
       Generate a random RSA keypair
 
@@ -273,6 +314,8 @@ rec {
     mkHexBytes
     mkBase64Bytes
     mkAskPass
+    mkAskFile
+    mkAskEnv
     ;
 
   strings =
