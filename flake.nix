@@ -64,30 +64,30 @@
           };
 
           # To be used with https://github.com/NixOS/nix/pull/8892
-          schemas =
-            let
-              inherit (inputs.nixpkgs.lib) mapAttrs;
-            in
-            {
-              fleetConfigurations = {
-                version = 1;
-                doc = ''
-                  The `fleetConfigurations` flake output defines fleet cluster configurations.
-                '';
-                inventory = output: {
-                  children = mapAttrs (configName: cluster: {
-                    what = "fleet cluster configuration";
-
-                    children = mapAttrs (hostName: host: {
-                      what = "host [${host.system}]";
-                    }) cluster.config.hosts;
-                    # It is possible to implement this inventory right now, but I want to
-                    # get rid of `fleet.nix` file in the future.
-                    # children.secrets = { };
-                  }) output;
-                };
-              };
-            };
+          # schemas =
+          #   let
+          #     inherit (inputs.nixpkgs.lib) mapAttrs;
+          #   in
+          #   {
+          #     fleetConfigurations = {
+          #       version = 1;
+          #       doc = ''
+          #         The `fleetConfigurations` flake output defines fleet cluster configurations.
+          #       '';
+          #       inventory = output: {
+          #         children = mapAttrs (configName: cluster: {
+          #           what = "fleet cluster configuration";
+          #
+          #           children = mapAttrs (hostName: host: {
+          #             what = "host [${host.system}]";
+          #           }) cluster.config.hosts;
+          #           # It is possible to implement this inventory right now, but I want to
+          #           # get rid of `fleet.nix` file in the future.
+          #           # children.secrets = { };
+          #         }) output;
+          #       };
+          #     };
+          #   };
         };
         # Supported and tested list of deployment targets.
         systems = [
