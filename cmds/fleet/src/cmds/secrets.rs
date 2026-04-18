@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::io::{Write as _, stdout};
 
 use anyhow::{Context as _, Result, anyhow, bail};
@@ -33,6 +34,10 @@ pub enum Secret {
 		/// Machines to prune - if specified, only the choosen machines will be pruned
 		#[clap(short = 'm', long)]
 		machine: Vec<String>,
+
+		/// If set - distributions containing the specified machines will be pruned fully
+		#[clap(long)]
+		whole_dist: bool,
 	},
 	/// Ensure secret is generated and not expired
 	Ensure {
@@ -159,90 +164,50 @@ impl Secret {
 				*/
 				todo!()
 			}
-			Secret::Prune { name, machine } => todo!(),
+			Secret::Prune {
+				name,
+				machine,
+				whole_dist,
+			} => {
+				let mut secrets = config.data.secrets.write().expect("not poisoned");
+				let Some(dists) = secrets.get_mut(&name) else {
+					bail!("secret {name} not found");
+				};
+				if machine.is_empty() && whole_dist {
+					for dist in dists.distributions_mut() {
+						dist.prune("manual prune".to_owned());
+					}
+				} else if machine.is_empty() {
+					let dist = dists
+						.distributions_mut()
+						.exactly_one()
+						.map_err(|e| anyhow!("{e}"))
+						.context(
+							"with no machine specified, there should be exactly one distribution",
+						)?;
+					dist.prune("manual prune".to_owned());
+				} else if whole_dist {
+					for dist in dists.distributions_mut() {
+						if machine
+							.iter()
+							.any(|m| dist.owners().any(|o| o.as_host() == Some(m.as_str())))
+						{
+							dist.prune(format!(
+								"manual prune of distribution containing {}",
+								machine.join(", ")
+							));
+						}
+					}
+				} else {
+					let owners: BTreeSet<SecretOwner> =
+						machine.iter().map(SecretOwner::host).collect();
+					for dist in dists.distributions_mut() {
+						dist.prune_owners(&owners, "manual prune".to_owned());
+					}
+				}
+			}
 			Secret::Ensure { name, machine } => todo!(),
 		}
 		Ok(())
 	}
 }
-
-/*
-async fn edit_temp_file(
-	builder: tempfile::Builder<'_, '_>,
-	r: Vec<u8>,
-	header: &str,
-	comment: &str,
-) -> Result<(Vec<u8>, Option<String>), anyhow::Error> {
-	if !stdin().is_tty() {
-		// TODO: Also try to open /dev/tty directly?
-		bail!("stdin is not tty, can't open editor");
-	}
-
-	use std::fmt::Write;
-	let mut file = builder.tempfile()?;
-
-	let mut full_header = String::new();
-	let mut had = false;
-	for line in header.trim_end().lines() {
-		had = true;
-		writeln!(&mut full_header, "{comment}{line}")?;
-	}
-	if had {
-		writeln!(&mut full_header, "{}", comment.trim_end())?;
-	}
-	writeln!(
-		&mut full_header,
-		"{comment}Do not touch this header! It will be removed automatically"
-	)?;
-
-	file.write_all(full_header.as_bytes())?;
-	file.write_all(&r)?;
-
-	let abs_path = file.into_temp_path();
-	let editor = std::env::var_os("VISUAL")
-		.or_else(|| std::env::var_os("EDITOR"))
-		.unwrap_or_else(|| "vi".into());
-	let editor_args = shlex::bytes::split(editor.as_encoded_bytes())
-		.ok_or_else(|| anyhow!("EDITOR env var has wrong syntax"))?;
-	let editor_args = editor_args
-		.into_iter()
-		.map(|v| {
-			// Only ASCII subsequences are replaced
-			unsafe { OsString::from_encoded_bytes_unchecked(v) }
-		})
-		.collect_vec();
-	let Some((editor, args)) = editor_args.split_first() else {
-		bail!("EDITOR env var has no command");
-	};
-	let mut command = Command::new(editor);
-	command.args(args);
-
-	let path_arg = abs_path.canonicalize()?;
-
-	// TODO: Save full state, using tcget/_getmode/_setmode
-	let was_raw = terminal::is_raw_mode_enabled()?;
-	terminal::enable_raw_mode()?;
-
-	let status = command.arg(path_arg).status().await;
-
-	if !was_raw {
-		terminal::disable_raw_mode()?;
-	}
-
-	let success = match status {
-		Ok(s) => s.success(),
-		Err(e) if e.kind() == io::ErrorKind::NotFound => {
-			bail!("editor not found")
-		}
-		Err(e) => bail!("editor spawn error: {e}"),
-	};
-
-	let mut file = std::fs::read(&abs_path).context("read editor output")?;
-	let Some(v) = file.strip_prefix(full_header.as_bytes()) else {
-		todo!();
-	};
-	todo!();
-
-	// Ok((success, abs_path))
-}
-*/
