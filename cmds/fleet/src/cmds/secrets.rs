@@ -137,42 +137,57 @@ impl Secret {
 				bail!("failed to find suitable decrypting host");
 			}
 			Secret::List {} => {
-				/*
-				let _span = info_span!("loading secrets").entered();
-				let configured = config.list_configured_shared()?;
-				#[derive(Tabled)]
-				struct SecretDisplay {
+				let secrets = config.data.secrets.read().expect("not poisoned");
+
+				#[derive(tabled::Tabled)]
+				struct Row {
 					#[tabled(rename = "Name")]
 					name: String,
+					#[tabled(rename = "Dist")]
+					dist: String,
 					#[tabled(rename = "Owners")]
 					owners: String,
 				}
-				// let mut table = vec![];
-				for name in configured.iter().cloned() {
-					let config = config.clone();
-					let data = config.shared_secret(&name).expect("exists");
-					/*
-										let definition = config.shared_secret_definition(&name)?;
-										let expectations = definition.expectations()?;
-										let owners = data
-											.owners()
-											.map(|o| {
-												if expectations.owners.contains(o) {
-													o.green().to_string()
-												} else {
-													o.red().to_string()
-												}
-											})
-											.collect::<Vec<_>>();
-										table.push(SecretDisplay {
-											owners: owners.join(", "),
-											name,
-										})
-					*/
+
+				let mut rows = Vec::new();
+				for name in secrets.keys() {
+					let dists = secrets.get(name).unwrap();
+					for (idx, dist) in dists.all_distributions().enumerate() {
+						let active: Vec<_> = dist
+							.owners()
+							.filter_map(|o| o.as_host())
+							.map(str::to_owned)
+							.collect();
+						let pruned: Vec<_> = dist
+							.owners_pending_prune()
+							.filter_map(|o| o.as_host())
+							.map(|h| format!("{h} (pruned)"))
+							.collect();
+						let mut all_owners = active;
+						all_owners.extend(pruned);
+
+						let dist_label = if dist.is_pending_prune() {
+							format!("{idx} (pruned)")
+						} else {
+							idx.to_string()
+						};
+
+						rows.push(Row {
+							name: if idx == 0 {
+								name.clone()
+							} else {
+								String::new()
+							},
+							dist: dist_label,
+							owners: all_owners.join("\n"),
+						});
+					}
 				}
-				// info!("loaded\n{}", Table::new(table).to_string())
-				*/
-				todo!()
+
+				use tabled::settings::{Style, width::Width};
+				let mut table = tabled::Table::new(rows);
+				table.with(Width::wrap(80));
+				println!("{table}");
 			}
 			Secret::Prune {
 				name,

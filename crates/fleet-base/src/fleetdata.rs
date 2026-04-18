@@ -218,6 +218,12 @@ impl FleetSecretDistribution {
 	pub fn owners(&self) -> impl Iterator<Item = &SecretOwner> {
 		self.owners_ex(false)
 	}
+	pub fn owners_pending_prune(&self) -> impl Iterator<Item = &SecretOwner> {
+		self.owners_pending_prune.keys()
+	}
+	pub fn is_pending_prune(&self) -> bool {
+		self.pending_prune.is_some()
+	}
 
 	pub fn prune(&mut self, reason: String) {
 		assert!(
@@ -466,6 +472,9 @@ impl FleetSecretDistributions {
 		}
 	}
 
+	pub fn all_distributions(&self) -> impl Iterator<Item = &FleetSecretDistribution> {
+		self.stored.iter()
+	}
 	pub fn distributions(&self) -> impl Iterator<Item = &FleetSecretDistribution> {
 		self.stored.iter().filter(|v| v.pending_prune.is_none())
 	}
