@@ -5,7 +5,8 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use clap::Parser;
 use fleet_base::{fleetdata::SecretOwner, host::Config, opts::FleetOpts};
 use itertools::Itertools as _;
-use tracing::warn;
+use nix_eval::nix_go;
+use tracing::{info, warn};
 
 #[derive(Parser)]
 pub enum Secret {
@@ -206,7 +207,28 @@ impl Secret {
 					}
 				}
 			}
-			Secret::Ensure { name, machine } => todo!(),
+			Secret::Ensure { name, machine } => {
+				let hosts: Vec<String> = if machine.is_empty() {
+					config
+						.list_hosts()?
+						.into_iter()
+						.filter(|h| opts.should_skip(h).ok() != Some(true))
+						.map(|h| h.name)
+						.collect()
+				} else {
+					machine
+				};
+
+				for hostname in &hosts {
+					let nixos_cfg = config.system_config(hostname)?;
+					let secrets = nix_go!(nixos_cfg.secrets);
+					if secrets.has_field(&name)? {
+						info!("ensuring secret {name} for {hostname}");
+						// Force evaluation of secret parts, triggering __fleetEnsureHostSecret
+						nix_go!(secrets[{ &name }].definition.parts);
+					}
+				}
+			}
 		}
 		Ok(())
 	}
