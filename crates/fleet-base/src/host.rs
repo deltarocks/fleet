@@ -1,5 +1,5 @@
 use std::{
-	collections::{BTreeMap, BTreeSet},
+	collections::{BTreeMap, BTreeSet, HashSet},
 	ffi::{OsStr, OsString},
 	fmt::Display,
 	io::Write,
@@ -650,6 +650,23 @@ impl Config {
 			session_destination: OnceLock::new(),
 			legacy_ssh_store: OnceLock::new(),
 		}
+	}
+
+	pub fn preferred_hosts(
+		&self,
+		filter: impl Fn(&str) -> bool,
+	) -> Result<impl Iterator<Item = Result<ConfigHost>>> {
+		let prefer = self
+			.prefer_identities
+			.iter()
+			.filter_map(|v| v.as_host())
+			.collect::<HashSet<_>>();
+		let config = &self.config_field;
+		let mut names = nix_go!(config.hosts).list_fields()?;
+		names.retain(|s| filter(s));
+		names.sort_by_key(|h| prefer.contains(h.as_str()));
+
+		Ok(names.into_iter().map(|h| self.host(&h)))
 	}
 
 	pub fn host(&self, name: &str) -> Result<ConfigHost> {

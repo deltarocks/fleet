@@ -1,16 +1,10 @@
-use std::{
-	collections::{BTreeSet, HashSet},
-	io::{Read, stdin},
-	path::PathBuf,
-};
+use std::io::{Write as _, stdout};
 
-use anyhow::{Context as _, Result, anyhow, bail, ensure};
+use anyhow::{Context as _, Result, anyhow, bail};
 use clap::Parser;
 use fleet_base::{fleetdata::SecretOwner, host::Config, opts::FleetOpts};
-use fleet_shared::SecretData;
-use itertools::{ExactlyOneError, Itertools as _};
-use tokio::fs::read;
-use tracing::{info, warn};
+use itertools::Itertools as _;
+use tracing::warn;
 
 #[derive(Parser)]
 pub enum Secret {
@@ -27,13 +21,9 @@ pub enum Secret {
 		machine: Option<String>,
 
 		/// Which private secret part to read
-		#[clap(short = 'p', long, default_value = "secret")]
+		/// If not specified - only one existing part is read
+		#[clap(short = 'p', long)]
 		part: Option<String>,
-
-		/// Which host should we use to decrypt, in case if reencryption is required, without
-		/// regeneration
-		#[clap(long)]
-		prefer_identities: Vec<String>,
 	},
 	/// Prune (remove, mark for regeneration) secrets
 	Prune {
@@ -54,18 +44,6 @@ pub enum Secret {
 		machine: Vec<String>,
 	},
 	List {},
-	Edit {
-		name: String,
-		#[clap(short = 'm', long)]
-		machine: String,
-
-		#[clap(long)]
-		add: bool,
-
-		/// Which private secret part to read
-		#[clap(short = 'p', long, default_value = "secret")]
-		part: String,
-	},
 }
 
 impl Secret {
@@ -83,76 +61,65 @@ impl Secret {
 				name,
 				machine,
 				part: part_name,
-				mut prefer_identities,
 			} => {
-				let secret = config.data.secrets.read().expect("not poisoned");
+				let (owners, secret_data) = {
+					let secret = config.data.secrets.read().expect("not poisoned");
 
-				let Some(dist) = secret.get("name") else {
-					bail!("secret doesn't exists");
-				};
-
-				let dist = if let Some(machine) = &machine {
-					dist.get(&SecretOwner::host(machine))
-						.ok_or_else(|| anyhow!("machine {machine} has no secret generated"))?
-				} else {
-					dist.distributions()
-						.exactly_one()
-						.map_err(|e| anyhow!("{e}"))
-						.context(
-							"with no machine specified, there should be exactly one distribution",
-						)?
-				};
-
-				let part_name = part_name.unwrap_or_else(|| "secret".to_string());
-				let Some(part) = dist.secret.parts.get(&part_name) else {
-					bail!("secret part {part_name:?} is not defined");
-				};
-
-				// dist.get(SecretOwner(name));
-
-				todo!();
-				/*
-				let Some(secret) = config.shared_secret(&name) else {
-					bail!("secret doesn't exists");
-				};
-
-				let dist = if secret.len() == 1 {
-					&secret[0]
-				} else if let Some(machine) = machine {
-					let dist = secret.get(&machine);
-					let Some(dist) = dist else {
-						bail!("machine {machine} has no distribution of secret {name}");
+					let Some(dist) = secret.get(&name) else {
+						bail!("secret doesn't exists");
 					};
-					prefer_identities.push(machine);
-					dist
-				} else {
-					bail!(
-						"secret {name} has shares, but no --machine specified for specifing which do you need"
-					)
-				};
 
-				let Some(part) = dist.secret.parts.get(&part_name) else {
-					bail!("no part {part_name} in secret {name}");
-				};
-				let data = if part.raw.encrypted {
-					let identity_holder = if !prefer_identities.is_empty() {
-						prefer_identities
-							.iter()
-							.find(|i| dist.owners.iter().any(|s| s == *i))
+					let dist = if let Some(machine) = &machine {
+						dist.get(&SecretOwner::host(machine))
+							.ok_or_else(|| anyhow!("machine {machine} has no secret generated"))?
 					} else {
-						dist.owners.first()
+						dist.distributions()
+							.exactly_one()
+							.map_err(|e| anyhow!("{e}"))
+							.context(
+								"with no machine specified, there should be exactly one distribution",
+							)?
 					};
-					let Some(identity_holder) = identity_holder else {
-						bail!("no available holder found");
+
+					let part = if let Some(part_name) = &part_name {
+						dist.secret.parts.get(part_name).ok_or_else(|| {
+							anyhow!("secret {name} does not have part named {part_name}")
+						})?
+					} else {
+						dist.secret
+							.parts
+							.iter()
+							.exactly_one()
+							.map_err(|e| anyhow!("{e}"))
+							.context("with no part specified, there should be exactly one part")?
+							.1
 					};
-					let host = config.host(identity_holder)?;
-					host.decrypt(part.raw.clone()).await?
-				} else {
-					part.raw.data.clone()
+					let owners = dist.owners().cloned().collect::<Vec<_>>();
+					let secret_data = part.raw.clone();
+					(owners, secret_data)
 				};
-				stdout().write_all(&data)?;
-				*/
-				todo!()
+
+				for host in config
+					.preferred_hosts(|h| owners.iter().any(|o| o.as_host() == Some(h)))
+					.context("failed to list hosts")?
+				{
+					let host = match host {
+						Ok(h) => h,
+						Err(e) => {
+							warn!("failed to use host: {e}");
+							continue;
+						}
+					};
+					match host.decrypt(secret_data.clone()).await {
+						Ok(data) => {
+							let mut w = stdout();
+							w.write_all(&data)?;
+							return Ok(());
+						}
+						Err(e) => warn!("failed to decrypt on {}: {e}", host.name),
+					};
+				}
+				bail!("failed to find suitable decrypting host");
 			}
 			Secret::List {} => {
 				/*
@@ -190,26 +157,6 @@ impl Secret {
 				}
 				// info!("loaded\n{}", Table::new(table).to_string())
 				*/
-				todo!()
-			}
-			Secret::Edit {
-				name,
-				machine,
-				part,
-				add,
-			} => {
-				/*let secret = config
-					.host_secret(&machine, &name)
-					.context("secret not found")?;
-				if let Some(data) = secret.secret.parts.get(&part) {
-					let host = config.host(&machine)?;
-					let secret = host.decrypt(data.raw.clone()).await?;
-					String::from_utf8(secret).context("secret is not utf8")?
-				} else if add {
-					String::new()
-				} else {
-					bail!("part {part} not found in secret {name}. Did you mean to `--add` it?");
-				};*/
 				todo!()
 			}
 			Secret::Prune { name, machine } => todo!(),
