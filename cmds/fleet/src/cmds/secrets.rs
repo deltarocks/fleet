@@ -49,6 +49,15 @@ pub enum Secret {
 		#[clap(short = 'm', long)]
 		machine: Vec<String>,
 	},
+	/// Regenerate secret (prune then ensure)
+	Regenerate {
+		/// Secret to regenerate
+		name: String,
+
+		/// Machines to regenerate for - if specified, only those machines
+		#[clap(short = 'm', long)]
+		machine: Vec<String>,
+	},
 	List {},
 }
 
@@ -170,64 +179,92 @@ impl Secret {
 				machine,
 				whole_dist,
 			} => {
-				let mut secrets = config.data.secrets.write().expect("not poisoned");
-				let Some(dists) = secrets.get_mut(&name) else {
-					bail!("secret {name} not found");
-				};
-				if machine.is_empty() && whole_dist {
-					for dist in dists.distributions_mut() {
-						dist.prune("manual prune".to_owned());
-					}
-				} else if machine.is_empty() {
-					let dist = dists
-						.distributions_mut()
-						.exactly_one()
-						.map_err(|e| anyhow!("{e}"))
-						.context(
-							"with no machine specified, there should be exactly one distribution",
-						)?;
-					dist.prune("manual prune".to_owned());
-				} else if whole_dist {
-					for dist in dists.distributions_mut() {
-						if machine
-							.iter()
-							.any(|m| dist.owners().any(|o| o.as_host() == Some(m.as_str())))
-						{
-							dist.prune(format!(
-								"manual prune of distribution containing {}",
-								machine.join(", ")
-							));
-						}
-					}
-				} else {
-					let owners: BTreeSet<SecretOwner> =
-						machine.iter().map(SecretOwner::host).collect();
-					for dist in dists.distributions_mut() {
-						dist.prune_owners(&owners, "manual prune".to_owned());
-					}
-				}
+				Self::prune(config, &name, &machine, whole_dist)?;
 			}
 			Secret::Ensure { name, machine } => {
-				let hosts: Vec<String> = if machine.is_empty() {
-					config
-						.list_hosts()?
-						.into_iter()
-						.filter(|h| opts.should_skip(h).ok() != Some(true))
-						.map(|h| h.name)
-						.collect()
-				} else {
-					machine
-				};
+				Self::ensure(config, opts, &name, &machine)?;
+			}
+			Secret::Regenerate { name, machine } => {
+				let pruned = Self::prune(config, &name, &machine, true)?;
+				// In general, this is not correct - already evaluated secret would still be cached after pruning
+				// But as a dedicated CLI subcommand it is safe to assume it was not evaluated yet
+				Self::ensure(config, opts, &name, &pruned)?;
+			}
+		}
+		Ok(())
+	}
 
-				for hostname in &hosts {
-					let nixos_cfg = config.system_config(hostname)?;
-					let secrets = nix_go!(nixos_cfg.secrets);
-					if secrets.has_field(&name)? {
-						info!("ensuring secret {name} for {hostname}");
-						// Force evaluation of secret parts, triggering __fleetEnsureHostSecret
-						nix_go!(secrets[{ &name }].definition.parts);
-					}
+	fn prune(
+		config: &Config,
+		name: &str,
+		machine: &[String],
+		whole_dist: bool,
+	) -> Result<Vec<String>> {
+		let mut secrets = config.data.secrets.write().expect("not poisoned");
+		let Some(dists) = secrets.get_mut(name) else {
+			bail!("secret {name} not found");
+		};
+		let owners_before: BTreeSet<String> = dists
+			.owners()
+			.filter_map(|o| o.as_host().map(str::to_owned))
+			.collect();
+
+		if machine.is_empty() && whole_dist {
+			for dist in dists.distributions_mut() {
+				dist.prune("manual prune".to_owned());
+			}
+		} else if machine.is_empty() {
+			let dist = dists
+				.distributions_mut()
+				.exactly_one()
+				.map_err(|e| anyhow!("{e}"))
+				.context("with no machine specified, there should be exactly one distribution")?;
+			dist.prune("manual prune".to_owned());
+		} else if whole_dist {
+			for dist in dists.distributions_mut() {
+				if machine
+					.iter()
+					.any(|m| dist.owners().any(|o| o.as_host() == Some(m.as_str())))
+				{
+					dist.prune(format!(
+						"manual prune of distribution containing {}",
+						machine.join(", ")
+					));
 				}
+			}
+		} else {
+			let owners: BTreeSet<SecretOwner> = machine.iter().map(SecretOwner::host).collect();
+			for dist in dists.distributions_mut() {
+				dist.prune_owners(&owners, "manual prune".to_owned());
+			}
+		}
+
+		let owners_after: BTreeSet<String> = dists
+			.owners()
+			.filter_map(|o| o.as_host().map(str::to_owned))
+			.collect();
+		Ok(owners_before.difference(&owners_after).cloned().collect())
+	}
+
+	fn ensure(config: &Config, opts: &FleetOpts, name: &str, machine: &[String]) -> Result<()> {
+		let hosts: Vec<String> = if machine.is_empty() {
+			config
+				.list_hosts()?
+				.into_iter()
+				.filter(|h| opts.should_skip(h).ok() != Some(true))
+				.map(|h| h.name)
+				.collect()
+		} else {
+			machine.to_vec()
+		};
+
+		for hostname in &hosts {
+			let nixos_cfg = config.system_config(hostname)?;
+			let secrets = nix_go!(nixos_cfg.secrets);
+			if secrets.has_field(name)? {
+				info!("ensuring secret {name} for {hostname}");
+				// Force evaluation of secret parts, triggering __fleetEnsureHostSecret
+				nix_go!(secrets[{ name }].definition.parts);
 			}
 		}
 		Ok(())
