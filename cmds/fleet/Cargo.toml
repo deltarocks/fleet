@@ -48,6 +48,8 @@ opentelemetry_sdk.workspace = true
 thiserror.workspace = true
 tracing-indicatif = { workspace = true, optional = true }
 tracing-opentelemetry.workspace = true
+opentelemetry-exporter-env.workspace = true
+opentelemetry-appender-tracing.workspace = true
 
 [features]
 default = ["indicatif"]

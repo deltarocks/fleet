@@ -96,7 +96,7 @@ pub struct FleetOpts {
 	#[clap(long, default_value = env!("NIX_SYSTEM"))]
 	pub local_system: String,
 
-	/// By default fleet continues on single derivation build failure
+	/// By default fleet continues on single derivation build failure;
 	/// this flag makes command fail immediately
 	///
 	/// Opposite of Nix's --keep-going

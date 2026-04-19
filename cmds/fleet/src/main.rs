@@ -25,6 +25,12 @@ use indicatif::{ProgressState, ProgressStyle};
 use nix_eval::{
 	gc_register_my_thread, gc_unregister_my_thread, init_libraries, init_tokio_for_nix,
 };
+use opentelemetry::trace::TracerProvider;
+use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
+use opentelemetry_exporter_env::{
+	OtlpBaseSettings, OtlpLogsSettings, OtlpTracesSettings, ResolvedOtlpSettings,
+};
+use opentelemetry_sdk::{logs::SdkLoggerProvider, trace::SdkTracerProvider};
 use tracing::{Instrument, error, info, info_span};
 #[cfg(feature = "indicatif")]
 use tracing_indicatif::IndicatifLayer;
@@ -96,6 +102,14 @@ struct RootOpts {
 	fleet_opts: FleetOpts,
 	#[clap(subcommand)]
 	command: Opts,
+	#[clap(long, next_help_heading = "Telemetry", env = "OTEL_FLEET")]
+	otel: bool,
+	#[clap(flatten)]
+	otlp_base: OtlpBaseSettings,
+	#[clap(flatten)]
+	otel_logs: OtlpLogsSettings,
+	#[clap(flatten)]
+	otel_traces: OtlpTracesSettings,
 }
 
 async fn run_command(config: &Config, opts: FleetOpts, command: Opts) -> Result<()> {
@@ -115,7 +129,7 @@ async fn run_command(config: &Config, opts: FleetOpts, command: Opts) -> Result<
 	Ok(())
 }
 
-fn setup_logging() {
+fn setup_logging(opts: &RootOpts) -> Result<()> {
 	#[cfg(feature = "indicatif")]
 	let indicatif_layer = {
 		use std::time::Duration;
@@ -173,12 +187,35 @@ fn setup_logging() {
 		sub.with_filter(filter) // .without,
 	});
 
-	if env::var_os("FLEET_OTEL").is_some() {}
-
-	// #[cfg(feature = "indicatif")]
 	#[cfg(feature = "indicatif")]
 	let reg = reg.with(indicatif_layer);
-	reg.init();
+
+	if opts.otel {
+		let traces = ResolvedOtlpSettings::traces(&opts.otlp_base, &opts.otel_traces)?;
+		let span_exporter = traces.span_exporter()?;
+		let logs = ResolvedOtlpSettings::logs(&opts.otlp_base, &opts.otel_logs)?;
+		let log_exporter = logs.log_exporter()?;
+
+		let span_provider = SdkTracerProvider::builder()
+			.with_batch_exporter(span_exporter)
+			.build();
+		let log_provider = SdkLoggerProvider::builder()
+			.with_batch_exporter(log_exporter)
+			.build();
+
+		let logger = OpenTelemetryTracingBridge::new(&log_provider);
+		let tracer = span_provider.tracer("fleet");
+
+		let reg = reg
+			.with(tracing_opentelemetry::layer().with_tracer(tracer))
+			.with(logger);
+
+		reg.init();
+	} else {
+		reg.init();
+	};
+
+	Ok(())
 }
 
 fn main() -> ExitCode {
@@ -188,7 +225,10 @@ fn main() -> ExitCode {
 		return ExitCode::SUCCESS;
 	}
 
-	setup_logging();
+	if let Err(e) = setup_logging(&opts) {
+		eprintln!("{e:#}");
+		return ExitCode::FAILURE;
+	}
 
 	init_libraries();
 

@@ -196,7 +196,12 @@ macro_rules! impl_settings {
 		pub struct $id {
 			$(
 				$(#[doc = $doc])*
-				#[cfg_attr(feature = "clap", arg(long = concat!("otel-exporter-otlp-", $long_prefix, $long), env = concat!("OTEL_EXPORTER_OTLP_", $env_prefix, $env) $(, $($tt)*)?))]
+				#[cfg_attr(feature = "clap", arg(
+						long = concat!("otel-exporter-otlp-", $long_prefix, $long),
+						id = concat!("otel-exporter-otlp-", $long_prefix, $long),
+						env = concat!("OTEL_EXPORTER_OTLP_", $env_prefix, $env)
+						$(, $($tt)*)?)
+				)]
 				pub $name: Option<$ty>,
 			)*
 		}
