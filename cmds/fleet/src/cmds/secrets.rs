@@ -6,6 +6,8 @@ use clap::Parser;
 use fleet_base::{fleetdata::SecretOwner, host::Config, opts::FleetOpts};
 use itertools::Itertools as _;
 use nix_eval::nix_go;
+use tabled::settings::{Style, width::Width};
+use tabled::{Table, Tabled};
 use tracing::{info, warn};
 
 #[derive(Parser)]
@@ -139,7 +141,7 @@ impl Secret {
 			Secret::List {} => {
 				let secrets = config.data.secrets.read().expect("not poisoned");
 
-				#[derive(tabled::Tabled)]
+				#[derive(Tabled)]
 				struct Row {
 					#[tabled(rename = "Name")]
 					name: String,
@@ -184,8 +186,8 @@ impl Secret {
 					}
 				}
 
-				use tabled::settings::{Style, width::Width};
-				let mut table = tabled::Table::new(rows);
+				let mut table = Table::new(rows);
+				table.with(Style::rounded());
 				table.with(Width::wrap(80));
 				println!("{table}");
 			}
