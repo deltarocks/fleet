@@ -145,17 +145,37 @@ pub async fn generate(
 				);
 			}
 
+			let mut missing_parts = expectations.parts.clone();
 			let mut parts = BTreeMap::new();
 			for part in host_on.read_dir(&out).await? {
 				if part == "created_at" || part == "expires_at" || part == "marker" {
 					continue;
 				}
+				let Some(part_def) = missing_parts.remove(&part) else {
+					bail!("secret generator has produced an unexpected part: {part}");
+				};
 				let contents: SecretData = host_on
 					.read_file_text(format!("{out}/{part}"))
 					.await?
 					.parse()
 					.map_err(|e| anyhow!("failed to decode secret {out:?} part {part:?}: {e}"))?;
+
+				ensure!(
+					contents.encrypted == part_def.encrypted,
+					"part {part} produced by generator is supposed to be {}, but it was not",
+					if part_def.encrypted {
+						"encrypted"
+					} else {
+						"plaintext"
+					}
+				);
+
 				parts.insert(part.to_owned(), FleetSecretPart { raw: contents });
+			}
+			if !missing_parts.is_empty() {
+				bail!(
+					"the secret generator has not produced the following expected parts: {missing_parts:?}"
+				);
 			}
 
 			let created_at = host_on.read_file_value(format!("{out}/created_at")).await?;
