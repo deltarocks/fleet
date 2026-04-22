@@ -71,23 +71,30 @@ in
       ) set;
   };
 
-  config.system.activationScripts = {
-    onlineActivation = {
-      text = ''
-        if [ ! -z ''${FLEET_ONLINE_ACTIVATION+x} ]; then
-          1>&2 echo "online activation; hello, fleet!"
-        fi
-      '';
-      supportsDryActivation = true;
+  config = {
+    systemd.targets.online-activation = {
+      description = "Online activation target for deploy-time services";
     };
-  }
-  // config.system.onlineActivationScripts;
 
-  config.systemd.services = mkIf config.networking.networkmanager.enable {
-    # If machine is managed by fleet, we should not restart NetworkManager during activation,
-    # as it will disrupt the activation process. Furthermore, NetworkManager is not declarative,
-    # so even if user wants to update his network settings - disabled NetworkManager restart
-    # will not affect that.
-    NetworkManager.restartIfChanged = mkDefault false;
+    system.activationScripts = {
+      onlineActivation = {
+        text = ''
+          if [ ! -z ''${FLEET_ONLINE_ACTIVATION+x} ]; then
+            1>&2 echo "online activation; hello, fleet!"
+            systemctl start online-activation.target
+          fi
+        '';
+        supportsDryActivation = true;
+      };
+    }
+    // config.system.onlineActivationScripts;
+
+    systemd.services = mkIf config.networking.networkmanager.enable {
+      # If machine is managed by fleet, we should not restart NetworkManager during activation,
+      # as it will disrupt the activation process. Furthermore, NetworkManager is not declarative,
+      # so even if user wants to update his network settings - disabled NetworkManager restart
+      # will not affect that.
+      NetworkManager.restartIfChanged = mkDefault false;
+    };
   };
 }
