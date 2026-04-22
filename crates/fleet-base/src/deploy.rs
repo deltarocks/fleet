@@ -190,17 +190,17 @@ pub async fn deploy_task(
 			};
 			let switch_script = specialised.join("bin/switch-to-configuration");
 			let mut cmd = host.cmd("systemd-run").in_current_span().await?;
-			cmd.arg("--collect")
+			if deploy_kind == DeployKind::NixosLustrate {
+				cmd.arg("--setenv=NIXOS_INSTALL_BOOTLOADER=1");
+			}
+			cmd.arg("--setenv=FLEET_ONLINE_ACTIVATION=1")
+				.arg("--collect")
 				.arg("--no-ask-password")
 				.arg("--pipe")
 				.arg("--quiet")
 				.arg("--service-type=exec")
 				.arg("--unit=fleet-switch-to-configuration")
-				.arg(switch_script);
-			if deploy_kind == DeployKind::NixosLustrate {
-				cmd.env("NIXOS_INSTALL_BOOTLOADER", "1");
-			}
-			cmd.env("FLEET_ONLINE_ACTIVATION", "1")
+				.arg(switch_script)
 				.arg(action.name().expect("upload.should_activate == false"));
 			if let Err(e) = cmd.sudo().run().in_current_span().await {
 				error!("failed to activate: {e}");
