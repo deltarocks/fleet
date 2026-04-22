@@ -1,0 +1,78 @@
+
+= Fleet
+:slug: index
+:order: 0
+
+An NixOS cluster deployment tool.
+
+== Advantages over existing configuration systems (NixOps/Morph)
+
+- Modules can configure multiple hosts at once (i.e. for wireguard/kubernetes installation)
+- Secrets can be securely stored in Git (no one except target hosts can decrypt them), automatically regenerated, reencrypted, etc.
+- Automatic rollback on deployment failure, which will work as long as system is passing initrd stage
+
+== Flake example
+
+[source,nix]
+----
+{
+  description = "My cluster configuration";
+  inputs = {
+    nixpkgs.url = "github:nixos/nixpkgs";
+    fleet = {
+      url = "github:CertainLach/fleet";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    flake-parts.url = "github:hercules-ci/flake-parts";
+  };
+  outputs = inputs:
+    inputs.flake-parts.lib.mkFlake {inherit inputs;} {
+      imports = [inputs.fleet.flakeModules.default];
+
+      fleetConfigurations.default = {
+        nixos = {
+          # Shared NixOS configuration for all hosts
+        };
+
+        imports = [
+          ./wireguard
+        ];
+
+        hosts.controlplane-1 = {
+          system = "x86_64-linux";
+          nixos = {
+            imports = [
+              ./controlplane-1/hardware-configuration.nix
+              ./controlplane-1/configuration.nix
+            ];
+          };
+        };
+      };
+    };
+}
+----
+
+== Secret generator example
+
+[source,nix]
+----
+{config, ...}: {
+  secrets = {
+    gitlab-initial-root = {
+      generator = {mkPassword}: mkPassword {};
+      owner = "gitlab";
+      group = "gitlab";
+    };
+    gitlab-secret = {
+      generator = {mkPassword}: mkPassword {};
+      owner = "gitlab";
+      group = "gitlab";
+    };
+  };
+  services.gitlab = {
+    enable = true;
+    initialRootPasswordFile = config.secrets.gitlab-initial-root.secretPath;
+    secrets.secretFile = config.secrets.gitlab-secret.secretPath;
+  };
+}
+----

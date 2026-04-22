@@ -1,0 +1,42 @@
+
+= Migration Guide
+:slug: migration
+:order: 2
+
+== fleet.nix <unset> => 0.1.0
+
+Add version field::
+Set it to 0.1.0; This field specifies which version of fleet do you use for cluster management, breaking changes will also break this value to make sure you read this guide.
+
+Move every secret part::
+Before it was only public and private, now it can be any number of parts.
+
+In your fleet.nix file, look at every record like this:
+[source,nix]
+----
+gitlab-initial-root = {
+	createdAt = "2024-03-01T15:54:32.983358495Z";
+	public = "example";
+	secret = "vp%d6wO#0#D2.../dgCA+v4Gf:YG";
+};
+----
+
+And modify it as following:
+[source,nix]
+----
+gitlab-initial-root = {
+	createdAt = "2024-03-01T15:54:32.983358495Z";
+	public.raw = "<PLAINTEXT>example";
+	secret.raw = ''
+		<ENCRYPTED><Z85-ENCODED>
+		vp%d6wO#0#D2.../dgCA+v4Gf:YG
+	'';
+};
+----
+
+Default encoding was also changed from `Z85` to `base64`. This conversion will be done by fleet automatically.
+
+Update references to secrets in fleet/nixos configurations::
+Instead of `config.secrets.secret-name.secretPath` use `config.secrets.secret-name.secret.path`,
+instead of `config.secrets.secret-name.stableSecretPath` use `config.secrets.secret-name.secret.stablePath`,
+instead of `config.secrets.secret-name.public` use `config.secrets.secret-name.public.data`.

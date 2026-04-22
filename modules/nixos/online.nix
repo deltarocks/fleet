@@ -17,6 +17,7 @@ let
     ;
   inherit (lib.attrsets) mapAttrs;
   inherit (lib.trivial) isString;
+  inherit (lib.meta) getExe';
 in
 {
   options.system.onlineActivationScripts = mkOption {
@@ -81,7 +82,7 @@ in
         text = ''
           if [ ! -z ''${FLEET_ONLINE_ACTIVATION+x} ]; then
             1>&2 echo "online activation; hello, fleet!"
-            systemctl start online-activation.target
+            ${getExe' config.systemd.package "systemctl"} start online-activation.target
           fi
         '';
         supportsDryActivation = true;
