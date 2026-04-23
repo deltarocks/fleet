@@ -125,12 +125,12 @@ TODO:: This section should into some kind of fleet documentation... But as there
   };
   services.gitlab = let secrets = config.secrets; in {
     enable = true;
-    initialRootPasswordFile = secrets.gitlab-initial-root.secretPath;
+    initialRootPasswordFile = secrets.gitlab-initial-root.secret.path;
     secrets = {
-      secretFile = secrets.gitlab-secret.secretPath;
-      otpFile = secrets.gitlab-otp.secretPath;
-      dbFile = secrets.gitlab-db.secretPath;
-      jwsFile = secrets.gitlab-jws.secretPath;
+      secretFile = secrets.gitlab-secret.secret.path;
+      otpFile = secrets.gitlab-otp.secret.path;
+      dbFile = secrets.gitlab-db.secret.path;
+      jwsFile = secrets.gitlab-jws.secret.path;
     };
   };
 }
@@ -200,7 +200,7 @@ I want to build ansible-like script execution in fleet for this kind of tasks.
         set -eu
         export OPENSSL_CONF=${openssl-conf}
         # Yay, using secrets to generate secrets!
-        HSM_PIN=$(cat ${config.secrets.hsm-pin.secretPath})
+        HSM_PIN=$(cat ${config.secrets.hsm-pin.secret.path})
         exec ${pkgs.openssl}/bin/openssl "$@" -keyform=engine -CAkeyform=engine -engine=pkcs11 -passin=pass:"$HSM_PIN"
       '';
     })
@@ -208,7 +208,7 @@ I want to build ansible-like script execution in fleet for this kind of tasks.
       name = "hsmt";
       text = ''
         set -eu
-        HSM_PIN=$(cat ${config.secrets.hsm-pin.secretPath})
+        HSM_PIN=$(cat ${config.secrets.hsm-pin.secret.path})
         exec ${pkgs.opensc}/bin/pkcs11-tool -l --pin="$HSM_PIN" "$@"
       '';
     })

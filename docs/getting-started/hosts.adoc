@@ -1,0 +1,58 @@
+
+= Configuring Hosts
+:order: 1
+
+Each host in a fleet configuration represents a machine in your cluster.
+
+== Defining Hosts
+
+[source,nix]
+----
+fleetConfigurations.default = {
+  hosts.web-1 = {
+    system = "x86_64-linux";
+    nixos = {
+      imports = [
+        ./web-1/hardware-configuration.nix
+        ./web-1/configuration.nix
+      ];
+    };
+  };
+
+  hosts.web-2 = {
+    system = "x86_64-linux";
+    nixos = {
+      imports = [
+        ./web-2/hardware-configuration.nix
+        ./web-2/configuration.nix
+      ];
+    };
+  };
+};
+----
+
+== Host Systems
+
+Every host must specify a `system` attribute. Supported systems:
+
+- `x86_64-linux`
+- `aarch64-linux`
+- `armv7l-linux`
+- `armv6l-linux`
+
+== Inline NixOS Configuration
+
+NixOS configuration can be specified inline:
+
+[source,nix]
+----
+hosts.monitoring = {
+  system = "x86_64-linux";
+  nixos = {
+    imports = [ ./monitoring/hardware-configuration.nix ];
+    services.prometheus.enable = true;
+    services.grafana.enable = true;
+    networking.firewall.allowedTCPPorts = [ 3000 9090 ];
+  };
+};
+----

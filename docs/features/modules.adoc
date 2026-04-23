@@ -1,0 +1,51 @@
+= Multi-host Modules
+:order: 0
+
+Fleet modules configure multiple hosts simultaneously. Unlike standard NixOS modules which configure a single machine, fleet modules have access to all hosts in the cluster.
+
+== Basic Module
+
+[source,nix]
+----
+# wireguard/default.nix
+{ config, ... }: {
+  hosts = builtins.mapAttrs (name: host: {
+    nixos.networking.wireguard.interfaces.wg0 = {
+      ips = [ host.config.wireguardIp ];
+      peers = builtins.filter (p: p.name != name)
+        (builtins.attrValues config.hosts);
+    };
+  }) config.hosts;
+}
+----
+
+== Using Modules
+
+Modules are imported in the `fleetConfigurations` block:
+
+[source,nix]
+----
+fleetConfigurations.default = {
+  imports = [
+    ./wireguard
+    ./monitoring
+  ];
+
+  hosts.node-1 = { ... };
+  hosts.node-2 = { ... };
+};
+----
+
+== Multi-instance Modules
+
+Modules can be parameterized and imported multiple times:
+
+[source,nix]
+----
+fleetConfigurations.default = {
+  imports = [
+    (import ./kubernetes { hosts = ["cp-1" "cp-2"]; })
+    (import ./kubernetes { hosts = ["cp-3" "cp-4"]; })
+  ];
+};
+----

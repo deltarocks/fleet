@@ -1,0 +1,282 @@
+= WireGuard Mesh Network
+:order: 0
+
+Full-mesh WireGuard VPN with automatic key generation, cross-host peer wiring, and hash-derived IPv6 ULA addresses.
+
+== Directory Structure
+
+----
+.
+├── flake.nix
+└── wireguard/
+    └── default.nix
+----
+
+== flake.nix
+
+[source,nix]
+----
+{...}: {
+  outputs =
+    inputs:
+    inputs.flake-parts.lib.mkFlake { inherit inputs; } {
+      imports = [
+        inputs.fleet.flakeModule
+      ];
+      fleetConfigurations.default = {
+        imports = [
+          (import ./wireguard { iface = "testwg"; })
+        ];
+        cluster.wireguard.testwg = {
+          hosts = [
+            "bernard"
+            "edgeworth"
+          ];
+          port = 51825;
+        };
+        hosts.bernard = {
+          system = "x86_64-linux";
+          network.externalIps = [
+            "78.11.11.11"
+          ];
+        };
+        hosts.edgeworth = {
+          system = "aarch64-linux";
+        };
+      };
+    };
+}
+----
+
+Module is imported with a parameterized interface name (`testwg`), then configured declaratively via `cluster.wireguard.testwg`.
+Hosts without `network.externalIps` (like `edgeworth`) are treated as NAT/roaming — no endpoint is set for them, peers connect outbound only.
+
+== wireguard/default.nix
+
+[source,nix]
+----
+{ iface }:
+{ config, lib, fleetLib, ... }:
+let
+  inherit (lib.attrsets) genAttrs optionalAttrs;
+  inherit (lib.strings) substring;
+  inherit (lib.lists)
+    filter
+    sort
+    unique
+    length
+    elemAt
+    ;
+  inherit (lib.options) mkOption;
+  inherit (lib.types) listOf str int;
+  inherit (lib) hashString lessThan;
+
+  cfg = config.cluster.wireguard.${iface};
+  hostNames = sort lessThan cfg.hosts;
+  hostHash = name: hashString "sha256" (name + iface);
+  hostSubnet =
+    name:
+    let
+      h = hostHash name;
+    in
+    "fd00:${substring 0 4 h}:${substring 4 4 h}:${substring 8 4 h}";
+  hostIPv6 = name: "${hostSubnet name}::1";
+in
+{
+  options.cluster.wireguard.${iface} = {
+    hosts = mkOption {
+      description = "Hostnames participating in this wireguard mesh";
+      type = listOf str;
+    };
+    port = mkOption {
+      description = "WireGuard listen port";
+      type = int;
+      default = 51824;
+    };
+  };
+
+  config = {
+    assertions = [
+      {
+        assertion = length (unique (map hostSubnet hostNames)) == length hostNames;
+        message = "${iface}: hostname-derived IPv6 subnet collision detected";
+      }
+    ];
+    secrets."${iface}-psk" = {
+      expectedOwners = hostNames;
+      generator = fleetLib.mkBase64Bytes { count = 32; };
+    };
+
+    hosts = genAttrs hostNames (name: {
+      nixos =
+        {
+          config,
+          nixosHosts,
+          hosts,
+          ...
+        }:
+        let
+          peerNames = filter (n: n != name) hostNames;
+        in
+        {
+          secrets."${iface}-key" = {
+            generator = fleetLib.mkX25519 { encoding = "base64"; };
+          };
+          secrets."${iface}-psk" = {
+            generator = "shared";
+          };
+
+          networking.wireguard.interfaces.${iface} = {
+            ips = [ "${hostIPv6 name}/64" ];
+            listenPort = cfg.port;
+            privateKeyFile = config.secrets."${iface}-key".secret.path;
+
+            peers = map (
+              peerName:
+              {
+                publicKey = nixosHosts.${peerName}.secrets."${iface}-key".public.data;
+                presharedKeyFile = config.secrets."${iface}-psk".secret.path;
+                allowedIPs = [ "${hostSubnet peerName}::/64" ];
+              }
+              // optionalAttrs (hosts.${peerName}.network.externalIps or [ ] != [ ]) {
+                endpoint = "${elemAt hosts.${peerName}.network.externalIps 0}:${toString cfg.port}";
+              }
+            ) peerNames;
+          };
+
+          networking.firewall.allowedUDPPorts = [ cfg.port ];
+        };
+    });
+  };
+  _file = ./default.nix;
+}
+----
+
+== How It Works
+
+=== Multi-Instance Module
+
+The outer function `{ iface }:` makes the module parameterizable — import it multiple times with different interface names to create independent WireGuard meshes with separate keys and subnets:
+
+[source,nix]
+----
+imports = [
+  (import ./wireguard { iface = "internal"; })
+  (import ./wireguard { iface = "management"; })
+];
+----
+
+=== IPv6 ULA Addressing
+
+Each host gets a unique `fd00::/64` subnet derived from `sha256(hostname + iface)`.
+No manual IP assignment needed — deterministic, collision-checked via assertion.
+
+For example, `bernard` on interface `testwg` gets `fd00:1c86:78d4:dcef::1/64`.
+
+=== Secrets
+
+`${iface}-key`::
+Per-host X25519 keypair via `fleetLib.mkX25519 { encoding = "base64"; }`.
+Private key encrypted in fleet state, public key plaintext — readable by other hosts at build time through `nixosHosts.${peerName}.secrets."${iface}-key".public.data`.
+
+`${iface}-psk`::
+Shared preshared key via `fleetLib.mkBase64Bytes { count = 32; }`.
+Defined at fleet level with `expectedOwners`, each host claims with `generator = "shared"`.
+
+=== NAT Handling
+
+Endpoint is set only for peers that have `network.externalIps`:
+
+[source,nix]
+----
+// optionalAttrs (hosts.${peerName}.network.externalIps or [ ] != [ ]) {
+  endpoint = "...";
+}
+----
+
+Hosts behind NAT initiate connections outward. Add `persistentKeepalive = 25;` if needed to maintain NAT mappings.
+
+== Deployment
+
+Single command generates all secrets and deploys:
+
+[source,shell]
+----
+fleet --only bernard --only edgeworth deploy switch
+----
+
+No separate key generation step — fleet generates and provisions secrets automatically.
+
+=== Fleet State After Deploy
+
+The fleet state file records encryption keys, per-host keypairs (separate distributions), and shared PSK:
+
+[source,nix]
+----
+{
+  hosts = {
+    bernard.encryptionKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ25i6...";
+    edgeworth.encryptionKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIELc1m...";
+  };
+  secrets = {
+    testwg-key = [
+      {
+        owners = [ "bernard" ];
+        createdAt = "2026-04-23T16:39:29.532714437Z";
+        public.raw = "<PLAINTEXT>T7F6A+6jU87kz4c8GftttyU+xB0KhHIaplDV65psb3M=";
+        secret.raw = "<ENCRYPTED><BASE64-ENCODED>...";
+      }
+      {
+        owners = [ "edgeworth" ];
+        createdAt = "2026-04-23T16:39:43.337788671Z";
+        public.raw = "<PLAINTEXT>QgERRQnE+blQaVNMNiQZ+uk+HEOFKVTmvg4O+MqQ0hA=";
+        secret.raw = "<ENCRYPTED><BASE64-ENCODED>...";
+      }
+    ];
+    testwg-psk = {
+      owners = [ "bernard" "edgeworth" ];
+      createdAt = "2026-04-23T16:39:30.126077659Z";
+      secret.raw = "<ENCRYPTED><BASE64-ENCODED>...";
+    };
+  };
+}
+----
+
+Note how `testwg-key` is a list — each host has its own distribution with a unique keypair.
+`testwg-psk` is a single distribution shared by both hosts.
+
+=== Verification
+
+`wg show` on `edgeworth`:
+
+----
+interface: testwg
+  public key: QgERRQnE+blQaVNMNiQZ+uk+HEOFKVTmvg4O+MqQ0hA=
+  private key: (hidden)
+  listening port: 51825
+
+peer: T7F6A+6jU87kz4c8GftttyU+xB0KhHIaplDV65psb3M=
+  preshared key: (hidden)
+  endpoint: 78.11.11.11:51825
+  allowed ips: fd00:1c86:78d4:dcef::/64
+  latest handshake: 1 second ago
+  transfer: 616 B received, 760 B sent
+----
+
+`wg show` on `bernard`:
+
+----
+interface: testwg
+  public key: T7F6A+6jU87kz4c8GftttyU+xB0KhHIaplDV65psb3M=
+  private key: (hidden)
+  listening port: 51825
+
+peer: QgERRQnE+blQaVNMNiQZ+uk+HEOFKVTmvg4O+MqQ0hA=
+  preshared key: (hidden)
+  endpoint: 109.11.11.11:51825
+  allowed ips: fd00:cac2:10cb:6ee9::/64
+  latest handshake: 7 minutes, 18 seconds ago
+  transfer: 468 B received, 380 B sent
+----
+
+Public keys match between state file and `wg show`. `edgeworth` has no external IP in fleet config, yet `bernard` sees its endpoint — `edgeworth` initiated the connection outward through NAT.

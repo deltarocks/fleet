@@ -1,6 +1,5 @@
 
 = Fleet
-:slug: index
 :order: 0
 
 An NixOS cluster deployment tool.
@@ -71,8 +70,8 @@ An NixOS cluster deployment tool.
   };
   services.gitlab = {
     enable = true;
-    initialRootPasswordFile = config.secrets.gitlab-initial-root.secretPath;
-    secrets.secretFile = config.secrets.gitlab-secret.secretPath;
+    initialRootPasswordFile = config.secrets.gitlab-initial-root.secret.path;
+    secrets.secretFile = config.secrets.gitlab-secret.secret.path;
   };
 }
 ----

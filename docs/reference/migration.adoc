@@ -1,6 +1,5 @@
 
 = Migration Guide
-:slug: migration
 :order: 2
 
 == fleet.nix <unset> => 0.1.0

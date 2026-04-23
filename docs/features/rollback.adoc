@@ -1,0 +1,29 @@
+
+= Automatic Rollback
+:order: 2
+
+Fleet automatically rolls back deployments that fail, preventing bricked machines.
+
+== How It Works
+
+When deploying a new system configuration:
+
+1. Fleet activates the new configuration
+2. A health check verifies the system booted successfully
+3. If the check fails, the previous configuration is restored
+
+Rollback works as long as the system passes the initrd stage. Be careful with changes to root filesystem mounts — those are harder to recover from.
+
+== Deployment Process
+
+[source,shell]
+----
+# Deploy to all hosts
+fleet deploy
+
+# Deploy to specific host
+fleet deploy web-1
+
+# Deploy without rollback (not recommended)
+fleet deploy --no-rollback
+----
