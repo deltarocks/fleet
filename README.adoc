@@ -1,5 +1,9 @@
 ++++
 <p align="center"><a href="https://github.com/CertainLach/fleet"><img alt="fleet logo" src="./docs/logo.svg" height="150"></img></a></p>
+<p align="center">
+  <a href="https://opencollective.com/jrsonnet"><img alt="opencollective" src="https://delta.rocks/badge/backers.svg"></img></a>
+  <a href="./LICENSE"><img alt="license" src="https://delta.rocks/badge/License · MIT.svg"></img></a>
+</p>
 ++++
 
 An NixOS cluster deployment tool.
