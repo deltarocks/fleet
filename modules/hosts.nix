@@ -100,7 +100,10 @@ in
             # Default hostname generation
             nixos.networking.hostName = mkFleetGeneratorDefault config._module.args.name;
             # Default 'all' tag for every host
-            tags = [ "all" ];
+            tags = [
+              "all"
+              "system/${config.system}"
+            ];
           };
           _file = ./meta.nix;
         }
