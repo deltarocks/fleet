@@ -10,14 +10,30 @@ use age::{
 	ssh::{ParseRecipientKeyError, Recipient as SshRecipient},
 };
 use anyhow::{Context, Result, anyhow, bail, ensure};
+use base64::{Engine as _, engine::general_purpose::STANDARD, write::EncoderWriter};
 use clap::{Parser, ValueEnum};
 use ed25519_dalek::SecretKey;
 use fleet_shared::SecretData;
+use hmac::Mac as _;
 use rand::{
 	Rng as _,
 	distr::{Alphanumeric, Distribution, SampleString, Uniform},
 	rng,
 };
+use sha2::Digest as _;
+
+fn gen_password(rng: &mut impl rand::Rng, size: usize, no_symbols: bool) -> String {
+	if no_symbols {
+		Alphanumeric.sample_string(rng, size)
+	} else {
+		const GEN_ASCII_SYMBOLS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
+		let uniform = Uniform::new(0, GEN_ASCII_SYMBOLS.len()).expect("range is valid");
+		(0..size)
+			.map(|_| uniform.sample(rng))
+			.map(|i| GEN_ASCII_SYMBOLS[i] as char)
+			.collect::<String>()
+	}
+}
 
 fn write_output_file(out: &str) -> Result<File> {
 	let file = OpenOptions::new()
@@ -105,8 +121,6 @@ fn wrap_encoder<'t>(w: impl Write + 't, encoding: OutputEncoding) -> impl Write 
 	match encoding {
 		OutputEncoding::Raw => coerce(w),
 		OutputEncoding::Base64 => {
-			use base64::{engine::general_purpose::STANDARD, write::EncoderWriter};
-
 			let writer = EncoderWriter::new(w, &STANDARD);
 			coerce(writer)
 		}
@@ -176,6 +190,18 @@ enum Generate {
 		no_symbols: bool,
 		#[arg(long, short = 'e', value_enum, default_value_t)]
 		encoding: OutputEncoding,
+	},
+	PostgresPassword {
+		#[arg(long, short = 's')]
+		secret: String,
+		#[arg(long, short = 'H')]
+		hash: String,
+		#[arg(long, default_value_t = 24)]
+		size: usize,
+		#[arg(long, default_value_t = 4096)]
+		iterations: u32,
+		#[arg(long, short = 'n')]
+		no_symbols: bool,
 	},
 	Bytes {
 		#[arg(long, short = 'o')]
@@ -286,19 +312,61 @@ fn main() -> Result<()> {
 						"misconfiguration? password is shorter than 6 chars"
 					);
 					let recipients = load_identities()?;
-					let out = if no_symbols {
-						Alphanumeric.sample_string(&mut rng, size)
-					} else {
-						// Alphabet of Alphanumberic + symbols
-						const GEN_ASCII_SYMBOLS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
-						let uniform =
-							Uniform::new(0, GEN_ASCII_SYMBOLS.len()).expect("range is valid");
-						(0..size)
-							.map(|_| uniform.sample(&mut rng))
-							.map(|i| GEN_ASCII_SYMBOLS[i] as char)
-							.collect::<String>()
-					};
+					let out = gen_password(&mut rng, size, no_symbols);
 					write_private(&recipients, &output, out.as_bytes(), encoding)?;
+				}
+				Generate::PostgresPassword {
+					secret,
+					hash,
+					size,
+					iterations,
+					no_symbols,
+				} => {
+					ensure!(
+						size >= 6,
+						"misconfiguration? password is shorter than 6 chars"
+					);
+					let recipients = load_identities()?;
+					let password = gen_password(&mut rng, size, no_symbols);
+
+					let mut salt = [0u8; 16];
+					rng.fill_bytes(&mut salt);
+					let salted = pbkdf2::pbkdf2_hmac_array::<sha2::Sha256, 32>(
+						password.as_bytes(),
+						&salt,
+						iterations,
+					);
+
+					type HmacSha256 = hmac::Hmac<sha2::Sha256>;
+					let mut mac = <HmacSha256 as hmac::Mac>::new_from_slice(&salted)
+						.expect("HMAC accepts any key length");
+					mac.update(b"Client Key");
+					let client_key = mac.finalize().into_bytes();
+
+					let mut hasher = sha2::Sha256::new();
+					hasher.update(client_key);
+					let stored_key = hasher.finalize();
+
+					let mut mac = <HmacSha256 as hmac::Mac>::new_from_slice(&salted)
+						.expect("HMAC accepts any key length");
+					mac.update(b"Server Key");
+					let server_key = mac.finalize().into_bytes();
+
+					let hash_str = format!(
+						"SCRAM-SHA-256${}:{}${}:{}",
+						iterations,
+						STANDARD.encode(salt),
+						STANDARD.encode(stored_key),
+						STANDARD.encode(server_key),
+					);
+
+					write_private(
+						&recipients,
+						&secret,
+						password.as_bytes(),
+						OutputEncoding::Raw,
+					)?;
+					write_public(&hash, hash_str.as_bytes(), OutputEncoding::Raw)?;
 				}
 				Generate::Bytes {
 					output,

@@ -89,6 +89,44 @@ rec {
       );
 
     /**
+      Generate a random password suitable for PostgreSQL role authentication.
+
+      Options:
+        size: generated password length in ascii characters (bytes).
+        iterations: PBKDF2 iteration count (PG default: 4096).
+        noSymbols: by default, character set includes various special characters ($ , ! + * : ~), and might
+                   not be accepted in some contexts, this option switches charset to just [A-Za-z0-9].
+
+      Output:
+        secret: encrypted password.
+        hash: SCRAM-SHA-256 hash of the password to be used by postgres.
+    */
+    # It is not possible to extract it into a scram-sha-256 generic generator because there is no estabilished format
+    # for it, and mongodb for example encodes it differently.
+    mkPostgresPassword =
+      {
+        size ? 32,
+        iterations ? 4096,
+        noSymbols ? false,
+      }:
+      (
+        { mkSecretGenerator }:
+        mkSecretGenerator {
+          script = ''
+            mkdir $out
+            gh generate postgres-password \
+              -s $out/secret \
+              -H $out/hash \
+              --size ${toString size} \
+              --iterations ${toString iterations} \
+              ${optionalString noSymbols "--no-symbols"}
+          '';
+          parts.secret.encrypted = true;
+          parts.hash.encrypted = false;
+        }
+      );
+
+    /**
       Generate a random ed25519 keypair
 
       Options:
@@ -205,8 +243,7 @@ rec {
       mkAskFile {
         inherit part;
         header = builtins.concatStringsSep "\n" (
-          (map (l: "# ${l}") (lib.splitString "\n" header))
-          ++ (map (v: "${v}=") variables)
+          (map (l: "# ${l}") (lib.splitString "\n" header)) ++ (map (v: "${v}=") variables)
         );
       };
 
@@ -306,6 +343,7 @@ rec {
 
   inherit (secrets)
     mkPassword
+    mkPostgresPassword
     mkEd25519
     mkX25519
     mkRsa

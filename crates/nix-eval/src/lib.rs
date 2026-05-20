@@ -26,9 +26,8 @@ use self::nix_raw::{
 	clear_err, copy_value, err_NIX_ERR_KEY, err_NIX_ERR_NIX_ERROR, err_NIX_ERR_OVERFLOW,
 	err_NIX_ERR_UNKNOWN, err_code, err_info_msg, err_msg, eval_state_build,
 	eval_state_builder_load, eval_state_builder_new, eval_state_builder_set_eval_setting,
-	expr_eval_from_string, fetchers_settings,
-	fetchers_settings_free, fetchers_settings_new, flake_lock, flake_lock_flags,
-	flake_lock_flags_free, flake_lock_flags_new, flake_reference,
+	expr_eval_from_string, fetchers_settings, fetchers_settings_free, fetchers_settings_new,
+	flake_lock, flake_lock_flags, flake_lock_flags_free, flake_lock_flags_new, flake_reference,
 	flake_reference_and_fragment_from_string, flake_reference_parse_flags,
 	flake_reference_parse_flags_free, flake_reference_parse_flags_new,
 	flake_reference_parse_flags_set_base_directory, flake_settings, flake_settings_free,
@@ -323,7 +322,9 @@ static GLOBAL_STATE: LazyLock<GlobalState> =
 thread_local! {
 	static THREAD_STATE: RefCell<ThreadState> = RefCell::new(ThreadState::new().expect("thread state init shouldn't fail"));
 }
-pub(crate) fn with_default_context<T>(f: impl FnOnce(*mut c_context, *mut c_eval_state) -> T) -> Result<T> {
+pub(crate) fn with_default_context<T>(
+	f: impl FnOnce(*mut c_context, *mut c_eval_state) -> T,
+) -> Result<T> {
 	let global = &GLOBAL_STATE.state;
 	let (ctx, state) = THREAD_STATE.with_borrow_mut(|w| (w.ctx.0, global.0));
 	let mut ctx = NixContext(ctx);
@@ -439,7 +440,11 @@ impl Drop for FlakeLockFlags {
 	}
 }
 
-pub(crate) unsafe extern "C" fn copy_nix_str(start: *const c_char, n: c_uint, user_data: *mut c_void) {
+pub(crate) unsafe extern "C" fn copy_nix_str(
+	start: *const c_char,
+	n: c_uint,
+	user_data: *mut c_void,
+) {
 	let s = unsafe { slice::from_raw_parts(start.cast::<u8>(), n as usize) };
 	let s = std::str::from_utf8(s).expect("c string has invalid utf-8");
 	unsafe { *user_data.cast::<String>() = s.to_owned() };
@@ -1128,8 +1133,8 @@ fn test_native() -> Result<()> {
 	let test_result: String = nix_go_json!(builtins.uppercaseSuffix2("test")("suffix"));
 	assert_eq!(test_result, "TESTsuffix");
 
-	let drv_path = nix_go!(attrs.packages["x86_64-linux"]["fleet-install-secrets"].drvPath)
-		.to_string()?;
+	let drv_path =
+		nix_go!(attrs.packages["x86_64-linux"]["fleet-install-secrets"].drvPath).to_string()?;
 	let graph = drv::DrvGraph::resolve(&drv_path)?;
 	eprintln!(
 		"fleet-install-secrets dependency graph: {} nodes",

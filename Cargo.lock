@@ -1045,7 +1045,10 @@ dependencies = [
  "ed25519-dalek",
  "fleet-shared",
  "hex",
+ "hmac",
+ "pbkdf2",
  "rand 0.10.1",
+ "sha2",
  "x25519-dalek",
 ]
 

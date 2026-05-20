@@ -351,12 +351,15 @@ pub fn register_build_graph(parent: &Span, graph: &crate::drv::DrvGraph) -> Buil
 			if let Some(entry) = drv_graph.get_mut(dep_path) {
 				entry.refcount += 1;
 			} else {
-				drv_graph.insert(dep_path.clone(), DrvGraphEntry {
-					name: dep_node.name.clone(),
-					parent: Some(path.clone()),
-					span: None,
-					refcount: 1,
-				});
+				drv_graph.insert(
+					dep_path.clone(),
+					DrvGraphEntry {
+						name: dep_node.name.clone(),
+						parent: Some(path.clone()),
+						span: None,
+						refcount: 1,
+					},
+				);
 			}
 			paths.push(dep_path.clone());
 			queue.push_back(dep_path.clone());

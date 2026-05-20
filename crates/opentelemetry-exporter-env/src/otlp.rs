@@ -55,15 +55,13 @@ macro_rules! build_exporter {
 				}
 				builder.build()
 			}
-			OtlpProtocol::HttpProtobuf | OtlpProtocol::HttpJson => {
-				<$exporter>::builder()
-					.with_http()
-					.with_endpoint(&s.endpoint)
-					.with_headers(to_hashmap(s.headers.as_deref()))
-					.with_protocol(s.protocol.into())
-					.with_timeout(s.timeout)
-					.build()
-			}
+			OtlpProtocol::HttpProtobuf | OtlpProtocol::HttpJson => <$exporter>::builder()
+				.with_http()
+				.with_endpoint(&s.endpoint)
+				.with_headers(to_hashmap(s.headers.as_deref()))
+				.with_protocol(s.protocol.into())
+				.with_timeout(s.timeout)
+				.build(),
 		}
 	}};
 }

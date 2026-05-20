@@ -11,10 +11,7 @@ mod otlp;
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
 	#[error("environment variable {env} contains invalid UTF-8: {value:?}")]
-	InvalidUtf8 {
-		env: &'static str,
-		value: OsString,
-	},
+	InvalidUtf8 { env: &'static str, value: OsString },
 	#[error("environment variable {env}={value:?}: {error}")]
 	EnvParse {
 		env: &'static str,
@@ -103,13 +100,30 @@ impl_enum! {
 #[cfg_attr(feature = "clap", derive(clap::Parser))]
 pub struct SignalExporterSettings {
 	/// Traces exporter to be used.
-	#[cfg_attr(feature = "clap", arg(long = "otel-traces-exporter", env = "OTEL_TRACES_EXPORTER", value_enum))]
+	#[cfg_attr(
+		feature = "clap",
+		arg(
+			long = "otel-traces-exporter",
+			env = "OTEL_TRACES_EXPORTER",
+			value_enum
+		)
+	)]
 	pub traces: Option<ExporterKind>,
 	/// Metrics exporter to be used.
-	#[cfg_attr(feature = "clap", arg(long = "otel-metrics-exporter", env = "OTEL_METRICS_EXPORTER", value_enum))]
+	#[cfg_attr(
+		feature = "clap",
+		arg(
+			long = "otel-metrics-exporter",
+			env = "OTEL_METRICS_EXPORTER",
+			value_enum
+		)
+	)]
 	pub metrics: Option<ExporterKind>,
 	/// Logs exporter to be used.
-	#[cfg_attr(feature = "clap", arg(long = "otel-logs-exporter", env = "OTEL_LOGS_EXPORTER", value_enum))]
+	#[cfg_attr(
+		feature = "clap",
+		arg(long = "otel-logs-exporter", env = "OTEL_LOGS_EXPORTER", value_enum)
+	)]
 	pub logs: Option<ExporterKind>,
 }
 
