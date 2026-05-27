@@ -107,6 +107,8 @@ fn is_printable(text: &str) -> bool {
 			// Complete base64 alphabet
 			|| c == '/' || c == '+'
 			|| c == '='
+			// Postgres scram256 - still readable
+			|| c == '$' || c == ':'
 	})
 }
 
