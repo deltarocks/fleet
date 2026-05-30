@@ -33,6 +33,7 @@ in
       hostArgs:
       let
         hostName = hostArgs.config._module.args.name;
+        hostConfig = hostArgs.config;
       in
       {
         inherit _file;
@@ -52,35 +53,36 @@ in
             apply =
               module:
               let
-                modulesPath = "${config.nixpkgs.buildUsing}/nixos/modules";
+                modulesPath = "${hostConfig.nixpkgs.buildUsing}/nixos/modules";
                 baseModules = (import "${modulesPath}/module-list.nix");
                 modules = baseModules ++ [
                   (module // { key = "attr<host.nixos>"; })
                   (config.nixos // { key = "attr<fleet.nixos>"; })
                 ];
-              in
-              config.nixpkgs.buildUsing.lib.evalModules {
-                class = "nixos";
-                prefix = [
-                  "fleetConfiguration"
-                  "hosts"
-                  hostName
-                  "nixos"
-                ];
-                inherit modules;
-                specialArgs = {
-                  inherit
-                    fleetLib
-                    inputs
-                    self
-                    modulesPath
-                    baseModules
-                    modules
-                    ;
-                  noUserModules = baseModules;
-                  extraModules = [ ];
+                normalEval = hostConfig.nixpkgs.buildUsing.lib.evalModules {
+                  class = "nixos";
+                  prefix = [
+                    "fleetConfiguration"
+                    "hosts"
+                    hostName
+                    "nixos"
+                  ];
+                  inherit modules;
+                  specialArgs = {
+                    inherit
+                      fleetLib
+                      inputs
+                      self
+                      modulesPath
+                      baseModules
+                      modules
+                      ;
+                    noUserModules = baseModules;
+                    extraModules = [ ];
+                  };
                 };
-              };
+              in
+              normalEval;
           };
           nixos_unchecked = mkOption {
             type = unspecified;
