@@ -144,10 +144,6 @@ pub struct FleetSecretData {
 	pub generation_data: Value,
 }
 
-fn is_false(b: &bool) -> bool {
-	*b == false
-}
-
 #[derive(Serialize, Deserialize, Clone, Debug, PartialOrd, Ord, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct SecretOwner(String);
@@ -291,7 +287,7 @@ fn compare_dists(
 	}
 
 	// Which one is easier to access
-	return a.owners.len().cmp(&b.owners.len());
+	a.owners.len().cmp(&b.owners.len())
 }
 
 impl FleetSecretDistributions {

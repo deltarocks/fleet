@@ -1,12 +1,13 @@
 use std::borrow::Cow;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
 use std::ptr::{null, null_mut};
 use std::sync::{Arc, LazyLock, OnceLock};
 use std::{array, fmt, slice};
-use std::{collections::HashMap, path::PathBuf};
 
 use anyhow::{Context, anyhow, bail};
+use camino::{Utf8Path, Utf8PathBuf};
 use itertools::Itertools;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -38,8 +39,9 @@ use self::nix_raw::{
 	make_attrs, make_bindings_builder, make_list, make_list_builder, realised_string,
 	realised_string_free, realised_string_get_buffer_size, realised_string_get_buffer_start,
 	realised_string_get_store_path, realised_string_get_store_path_count, register_primop,
-	set_err_msg, setting_set, state_free, store_open, store_parse_path, store_path_free,
-	store_path_name, string_realise, value, value_call, value_decref, value_force, value_incref,
+	set_err_msg, setting_set, state_free, store_copy_closure, store_free, store_open,
+	store_parse_path, store_path_free, store_path_name, string_realise, value, value_call,
+	value_decref, value_force, value_incref,
 };
 
 // Contains macros helpers
@@ -47,6 +49,7 @@ pub mod drv;
 pub mod logging;
 #[doc(hidden)]
 pub mod macros;
+pub mod scheduler;
 
 #[doc(hidden)]
 pub mod __macro_support {
@@ -68,8 +71,28 @@ mod nix_raw {
 }
 #[cxx::bridge]
 pub mod nix_cxx {
+	struct AddFileToStoreResult {
+		error: String,
+		store_path: String,
+		hash: String,
+	}
+	struct CxxProfileGeneration {
+		id: u64,
+		store_path: String,
+		creation_time_unix: i64,
+		current: bool,
+	}
+	struct CxxListGenerationsResult {
+		error: String,
+		generations: Vec<CxxProfileGeneration>,
+	}
+	struct CxxBuildResult {
+		error: String,
+		outputs: Vec<String>,
+	}
 	unsafe extern "C++" {
 		type nix_fetchers_settings;
+		type Store;
 		include!("nix-eval/src/lib.hh");
 
 		#[allow(clippy::missing_safety_doc)]
@@ -78,6 +101,34 @@ pub mod nix_cxx {
 			setting: *const c_char,
 			value: *const c_char,
 		);
+
+		#[allow(clippy::missing_safety_doc)]
+		unsafe fn switch_profile(store: *mut Store, profile: &str, store_path: &str) -> String;
+
+		#[allow(clippy::missing_safety_doc)]
+		unsafe fn sign_closure(store: *mut Store, store_path: &str, key_file: &str) -> String;
+
+		#[allow(clippy::missing_safety_doc)]
+		unsafe fn add_file_to_store(
+			store: *mut Store,
+			name: &str,
+			path: &str,
+		) -> AddFileToStoreResult;
+
+		fn list_generations(profile_path: &str) -> CxxListGenerationsResult;
+
+		#[allow(clippy::missing_safety_doc)]
+		unsafe fn build_drv_outputs(
+			store: *mut Store,
+			drv_path: &str,
+			output_names_joined: &str,
+		) -> CxxBuildResult;
+
+		#[allow(clippy::missing_safety_doc)]
+		unsafe fn substitute_paths(store: *mut Store, paths_joined: &str) -> CxxBuildResult;
+
+		#[allow(clippy::missing_safety_doc)]
+		unsafe fn is_valid_path(store: *mut Store, path: &str) -> bool;
 	}
 }
 
@@ -186,7 +237,7 @@ impl NixContext {
 		unsafe { set_err_msg(self.0, err as c_int, msg.as_ptr()) };
 	}
 	pub fn set_err(&mut self, err: anyhow::Error) {
-		let mut fmt = format!("{err:?}").replace("\0", "\\0");
+		let fmt = format!("{err:?}").replace("\0", "\\0");
 		self.set_err_raw(
 			NixErrorKind::Generic,
 			&CString::new(fmt).expect("NUL bytes were just replaced"),
@@ -352,6 +403,125 @@ pub fn set_setting(s: &CStr, v: &CStr) -> Result<()> {
 	with_default_context(|c, _| unsafe { setting_set(c, s.as_ptr(), v.as_ptr()) }).map(|_| ())
 }
 
+#[instrument(skip(dst))]
+pub fn copy_closure_to(dst: &Store, path: &Utf8Path) -> Result<()> {
+	let path_c = CString::new(path.as_str())?;
+	with_store_context(|c, src_store, _state| -> Result<()> {
+		let sp = unsafe { store_parse_path(c, src_store, path_c.as_ptr()) };
+		if sp.is_null() {
+			bail!("failed to parse store path {path}");
+		}
+		let rc = unsafe { store_copy_closure(c, src_store, dst.0, sp) };
+		unsafe { store_path_free(sp) };
+		if rc != nix_raw::err_NIX_OK {
+			bail!("store_copy_closure failed (code {rc})");
+		}
+		Ok(())
+	})?
+}
+
+#[instrument]
+pub fn switch_profile(profile: &str, store_path: &Utf8Path) -> Result<()> {
+	let msg = with_store_context(|_c, store, _state| unsafe {
+		nix_cxx::switch_profile(store.cast(), profile, store_path.as_str())
+	})?
+	.to_string();
+	if msg.is_empty() {
+		Ok(())
+	} else {
+		bail!("failed to switch profile {profile}: {msg}");
+	}
+}
+
+// TODO: fleet operator-managed key file
+#[instrument]
+pub fn sign_closure(store_path: &str, key_file: &str) -> Result<()> {
+	let msg = with_store_context(|_c, store, _state| unsafe {
+		nix_cxx::sign_closure(store.cast(), store_path, key_file)
+	})?
+	.to_string();
+	if msg.is_empty() {
+		Ok(())
+	} else {
+		bail!("failed to sign {store_path}: {msg}");
+	}
+}
+
+#[derive(Debug)]
+pub struct AddedFile {
+	pub store_path: Utf8PathBuf,
+	pub hash: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ProfileGeneration {
+	pub id: u64,
+	pub store_path: Utf8PathBuf,
+	pub creation_time_unix: i64,
+	pub current: bool,
+}
+
+#[instrument]
+pub fn list_generations(profile_path: &str) -> Result<Vec<ProfileGeneration>> {
+	let res = nix_cxx::list_generations(profile_path);
+	if !res.error.is_empty() {
+		bail!(
+			"failed to list generations at {profile_path}: {}",
+			res.error
+		);
+	}
+	Ok(res
+		.generations
+		.into_iter()
+		.map(|g| ProfileGeneration {
+			id: g.id,
+			store_path: Utf8PathBuf::from(g.store_path),
+			creation_time_unix: g.creation_time_unix,
+			current: g.current,
+		})
+		.collect())
+}
+
+#[instrument]
+pub fn add_file_to_store(name: &str, path: &Utf8Path) -> Result<AddedFile> {
+	let res = with_store_context(|_c, store, _state| unsafe {
+		nix_cxx::add_file_to_store(store.cast(), name, path.as_str())
+	})?;
+	if !res.error.is_empty() {
+		bail!("failed to add {path} to store: {}", res.error);
+	}
+	Ok(AddedFile {
+		store_path: Utf8PathBuf::from(res.store_path),
+		hash: res.hash,
+	})
+}
+
+pub fn build_drv_outputs(drv_path: &str, output_names: &[String]) -> Result<Vec<String>> {
+	let joined = output_names.join("\n");
+	let res = with_store_context(|_c, store, _state| unsafe {
+		nix_cxx::build_drv_outputs(store.cast(), drv_path, &joined)
+	})?;
+	if !res.error.is_empty() {
+		bail!("build of {drv_path} failed: {}", res.error);
+	}
+	Ok(res.outputs)
+}
+
+pub fn substitute_paths(paths: &[String]) -> Result<Vec<String>> {
+	let joined = paths.join("\n");
+	let res = with_store_context(|_c, store, _state| unsafe {
+		nix_cxx::substitute_paths(store.cast(), &joined)
+	})?;
+	if !res.error.is_empty() {
+		warn!("substitute_paths reported: {}", res.error);
+	}
+	Ok(res.outputs)
+}
+
+pub fn is_valid_path(path: &str) -> Result<bool> {
+	with_store_context(|_c, store, _state| unsafe { nix_cxx::is_valid_path(store.cast(), path) })
+}
+
 pub struct FetchSettings(*mut fetchers_settings);
 impl FetchSettings {
 	pub fn new() -> Self {
@@ -450,15 +620,29 @@ pub(crate) unsafe extern "C" fn copy_nix_str(
 	unsafe { *user_data.cast::<String>() = s.to_owned() };
 }
 
-struct Store(*mut c_store);
+pub struct Store(*mut c_store);
 unsafe impl Send for Store {}
 unsafe impl Sync for Store {}
 
 impl Store {
+	pub fn open(uri: &str) -> Result<Self> {
+		let uri = CString::new(uri)?;
+		let ptr = with_default_context(|c, _| unsafe { store_open(c, uri.as_ptr(), null_mut()) })?;
+		if ptr.is_null() {
+			bail!("failed to open store");
+		}
+		Ok(Store(ptr))
+	}
+
 	fn parse_path(&self, path: &CStr) -> Result<StorePath> {
 		with_default_context(|c, _| {
 			StorePath(unsafe { store_parse_path(c, self.0, path.as_ptr()) })
 		})
+	}
+}
+impl Drop for Store {
+	fn drop(&mut self) {
+		unsafe { store_free(self.0) }
 	}
 }
 
@@ -858,7 +1042,7 @@ impl Value {
 		Ok(out)
 	}
 	#[instrument(name = "build", skip(self), fields(output))]
-	pub fn build(&self, output: &str) -> Result<PathBuf> {
+	pub fn build(&self, output: &str) -> Result<Utf8PathBuf> {
 		if !self.is_derivation() {
 			bail!("expected derivation to build")
 		}
@@ -880,14 +1064,15 @@ impl Value {
 			.get_field("drvPath")
 			.context("getting drvPath")?
 			.to_string()?;
-		let graph = drv::DrvGraph::resolve(&drv_path)?;
+		let graph = Arc::new(drv::DrvGraph::resolve(&drv_path)?);
 		let _guard = logging::register_build_graph(&Span::current(), &graph);
 
-		// to_string here blocks until the path is built
+		scheduler::build_graph_sync(graph.clone(), vec![output.to_owned()])?;
+
 		let s = v.builtin_to_string()?;
 		let rs = s.to_realised_string()?;
 		let out_path = rs.as_str().to_owned();
-		Ok(PathBuf::from(out_path))
+		Ok(Utf8PathBuf::from(out_path))
 	}
 	pub fn as_json<T: DeserializeOwned>(&self) -> Result<T> {
 		let to_json = Self::eval("builtins.toJSON")?;

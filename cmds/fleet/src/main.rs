@@ -4,9 +4,10 @@ pub(crate) mod cmds;
 // pub(crate) mod command;
 pub(crate) mod extra_args;
 
-use std::{env, ffi::OsString, process::ExitCode, sync::Arc};
+use std::{process::ExitCode, sync::Arc};
 
-use anyhow::{Result, bail};
+use anyhow::{Context as _, Result, bail};
+use camino::Utf8PathBuf;
 use clap::{CommandFactory, Parser};
 use cmds::{
 	build_systems::{BuildSystems, Deploy},
@@ -23,7 +24,8 @@ use human_repr::HumanCount;
 #[cfg(feature = "indicatif")]
 use indicatif::{ProgressState, ProgressStyle};
 use nix_eval::{
-	gc_register_my_thread, gc_unregister_my_thread, init_libraries, init_tokio_for_nix,
+	add_file_to_store, gc_register_my_thread, gc_unregister_my_thread, init_libraries,
+	init_tokio_for_nix,
 };
 use opentelemetry::trace::TracerProvider;
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
@@ -48,24 +50,21 @@ impl Prefetch {
 		}
 		let tasks = FuturesUnordered::new();
 		for entry in std::fs::read_dir(&prefetch_dir)? {
-			tasks.push(async {
-				let entry = entry?;
-				if !entry.metadata()?.is_file() {
-					bail!("only files should exist in prefetch directory");
-				}
-				let span = info_span!(
-					"prefetching",
-					name = entry.file_name().to_string_lossy().as_ref()
-				);
-				let mut path = OsString::new();
-				path.push("file://");
-				path.push(entry.path());
-
-				let mut status = config.local_host().cmd("nix").await?;
-				status.args(&config.nix_args);
-				status.arg("store").arg("prefetch-file").arg(path);
-				status.run_nix_string().instrument(span).await?;
-				Ok(())
+			let entry = entry?;
+			if !entry.metadata()?.is_file() {
+				bail!("only files should exist in prefetch directory");
+			}
+			let name = entry.file_name().to_string_lossy().into_owned();
+			let path =
+				Utf8PathBuf::try_from(entry.path()).context("prefetch path should be utf8")?;
+			let span = info_span!("prefetching", name = %name);
+			tasks.push(async move {
+				let added = tokio::task::spawn_blocking(move || add_file_to_store(&name, &path))
+					.instrument(span.clone())
+					.await??;
+				let _g = span.enter();
+				info!("{} -> {}", added.hash, added.store_path);
+				anyhow::Ok(())
 			});
 		}
 		tasks.try_collect::<Vec<()>>().await?;
@@ -179,9 +178,7 @@ fn setup_logging(opts: &RootOpts) -> Result<()> {
 	let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
 	let reg = tracing_subscriber::registry().with({
-		let sub = tracing_subscriber::fmt::layer()
-			.without_time()
-			.with_target(false);
+		let sub = tracing_subscriber::fmt::layer().without_time();
 		#[cfg(feature = "indicatif")]
 		let sub = sub.with_writer(indicatif_layer.get_stderr_writer());
 		sub.with_filter(filter) // .without,
@@ -262,14 +259,10 @@ fn main() -> ExitCode {
 }
 
 async fn main_real(opts: RootOpts) -> Result<()> {
-	let nix_args = std::env::var_os("NIX_ARGS")
-		.map(|a| extra_args::parse_os(&a))
-		.transpose()?
-		.unwrap_or_default();
-	let config = opts.fleet_opts.build(
-		nix_args,
-		matches!(opts.command, Opts::Deploy(_) | Opts::BuildSystems(_)),
-	)?;
+	let config = opts.fleet_opts.build(matches!(
+		opts.command,
+		Opts::Deploy(_) | Opts::BuildSystems(_)
+	))?;
 
 	match run_command(&config, opts.fleet_opts, opts.command).await {
 		Ok(()) => {

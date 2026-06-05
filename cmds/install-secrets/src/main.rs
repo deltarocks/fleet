@@ -227,7 +227,6 @@ fn main() -> anyhow::Result<()> {
 				.from_env_lossy(),
 		)
 		.without_time()
-		.with_target(false)
 		.init();
 
 	let opts = Opts::parse();

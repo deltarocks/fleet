@@ -1,6 +1,7 @@
 use std::{env::current_dir, os::unix::fs::symlink, path::PathBuf};
 
 use anyhow::Result;
+use camino::Utf8PathBuf;
 use clap::Parser;
 use fleet_base::{
 	deploy::{DeployAction, deploy_task, upload_task},
@@ -29,7 +30,7 @@ pub struct BuildSystems {
 	build_attr: String,
 }
 
-async fn build_task(config: Config, hostname: String, build_attr: &str) -> Result<PathBuf> {
+async fn build_task(config: Config, hostname: String, build_attr: &str) -> Result<Utf8PathBuf> {
 	info!("building");
 	let host = config.host(&hostname)?;
 	// let action = Action::from(self.subcommand.clone());
@@ -42,17 +43,20 @@ async fn build_task(config: Config, hostname: String, build_attr: &str) -> Resul
 	// We already have system profiles for backups.
 	if !host.local {
 		info!("adding gc root");
-		let mut cmd = config.local_host().cmd("nix").await?;
-		cmd.arg("build")
-			.comparg(
-				"--profile",
-				format!(
-					"/nix/var/nix/profiles/{}-{hostname}",
-					config.data.gc_root_prefix
-				),
-			)
-			.arg(&out_output);
-		cmd.sudo().run_nix().await?;
+		let local = config.local_host();
+		let plugin_id = local.ensure_nix_plugin().await?;
+		let nix = local
+			.remowt()
+			.await?
+			.plugin_endpoints::<remowt_fleet::NixClient<_>>(plugin_id);
+		let profile = format!(
+			"/nix/var/nix/profiles/{}-{hostname}",
+			config.data.gc_root_prefix
+		);
+		nix.switch_profile(profile, out_output.clone())
+			.await
+			.map_err(|e| anyhow::anyhow!("{e:?}"))?
+			.map_err(|e| anyhow::anyhow!("{e}"))?;
 	}
 
 	Ok(out_output)

@@ -1,6 +1,7 @@
-use std::{collections::BTreeMap, ffi::OsString, path::PathBuf};
+use std::{collections::BTreeMap, ffi::OsString};
 
 use anyhow::{Context, Result};
+use camino::Utf8PathBuf;
 use clap::Parser;
 use fleet_base::host::Config;
 use nix_eval::nix_go;
@@ -40,7 +41,7 @@ impl Tf {
 			let system = &config.local_system;
 			let config = &config.flake_outputs;
 			let data = nix_go!(config.tf({ system }));
-			let data: PathBuf = spawn_blocking(move || data.build("out"))
+			let data: Utf8PathBuf = spawn_blocking(move || data.build("out"))
 				.await
 				.expect("tf.json derivation should not fail")?;
 			let data = fs::read(&data).await?;

@@ -2,10 +2,10 @@
   "nodes": {
     "crane": {
       "locked": {
-        "lastModified": 1773189535,
+        "lastModified": 1780532242,
         "owner": "ipetkov",
         "repo": "crane",
-        "rev": "6fa2fb4cf4a89ba49fc9dd5a3eb6cde99d388269",
+        "rev": "59a82a1222dd3b2080b5cc52a1a2e8d5f1b77f37",
         "type": "github"
       },
       "original": {
@@ -37,10 +37,10 @@
         ]
       },
       "locked": {
-        "lastModified": 1772408722,
+        "lastModified": 1778716662,
         "owner": "hercules-ci",
         "repo": "flake-parts",
-        "rev": "f20dc5d9b8027381c474144ecabc9034d6a839a3",
+        "rev": "f7c1a2d347e4c52d5fb8d10cb4d94b5884e546fb",
         "type": "github"
       },
       "original": {
@@ -62,10 +62,10 @@
         ]
       },
       "locked": {
-        "lastModified": 1759080490,
+        "lastModified": 1780160585,
         "owner": "CertainLach",
         "repo": "fleet-tf",
-        "rev": "878bd8c23933d628bf750378bbe527b841901c3d",
+        "rev": "aa2200a3f8f93a8c0d3b87bb29f11d9d9b0a23e6",
         "type": "github"
       },
       "original": {
@@ -111,10 +111,10 @@
         "nixpkgs-regression": "nixpkgs-regression"
       },
       "locked": {
-        "lastModified": 1768702010,
+        "lastModified": 1781448983,
         "owner": "deltarocks",
         "repo": "nix",
-        "rev": "b05b52670b9c7affff5b9be3edb539a1603c39e6",
+        "rev": "bb8784f285658e77642437409824619f5c34a854",
         "type": "github"
       },
       "original": {
@@ -126,10 +126,10 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1773268153,
+        "lastModified": 1781402740,
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "63ca4f465b79edbaa9ff113ea7ff48fb49ea0db0",
+        "rev": "49145c5aba740948d6da1265f584826bd27619ad",
         "type": "github"
       },
       "original": {
@@ -171,6 +171,34 @@
         "type": "github"
       }
     },
+    "remowt-agents": {
+      "inputs": {
+        "crane": [
+          "crane"
+        ],
+        "flake-parts": [
+          "flake-parts"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ],
+        "rust-overlay": "rust-overlay",
+        "shelly": [
+          "shelly"
+        ]
+      },
+      "locked": {
+        "lastModified": 1781471358,
+        "rev": "c69dddc33f8e2081ef685ae20a7278f92cfcd32e",
+        "revCount": 37,
+        "type": "git",
+        "url": "file:/home/lach/build/remowt-agents"
+      },
+      "original": {
+        "type": "git",
+        "url": "file:/home/lach/build/remowt-agents"
+      }
+    },
     "root": {
       "inputs": {
         "crane": "crane",
@@ -178,7 +206,8 @@
         "fleet-tf": "fleet-tf",
         "nix": "nix",
         "nixpkgs": "nixpkgs",
-        "rust-overlay": "rust-overlay",
+        "remowt-agents": "remowt-agents",
+        "rust-overlay": "rust-overlay_2",
         "shelly": "shelly",
         "treefmt-nix": "treefmt-nix"
       }
@@ -186,14 +215,34 @@
     "rust-overlay": {
       "inputs": {
         "nixpkgs": [
+          "remowt-agents",
           "nixpkgs"
         ]
       },
       "locked": {
-        "lastModified": 1773216618,
+        "lastModified": 1769309768,
         "owner": "oxalica",
         "repo": "rust-overlay",
-        "rev": "07d7dc6fcc5eae76b4fb0e19d4afd939437bec97",
+        "rev": "140c9dc582cb73ada2d63a2180524fcaa744fad5",
+        "type": "github"
+      },
+      "original": {
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "type": "github"
+      }
+    },
+    "rust-overlay_2": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1781320681,
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "rev": "5b929d8c854149d926d05ea0cd6469bf4e54db27",
         "type": "github"
       },
       "original": {
@@ -223,10 +272,10 @@
         ]
       },
       "locked": {
-        "lastModified": 1772660329,
+        "lastModified": 1780220602,
         "owner": "numtide",
         "repo": "treefmt-nix",
-        "rev": "3710e0e1218041bbad640352a0440114b1e10428",
+        "rev": "db947814a175b7ca6ded66e21383d938df01c227",
         "type": "github"
       },
       "original": {

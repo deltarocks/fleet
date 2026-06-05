@@ -1,30 +1,33 @@
 use std::{
 	collections::{BTreeMap, BTreeSet, HashSet},
-	ffi::{OsStr, OsString},
-	fmt::Display,
+	future::Future,
 	io::Write,
 	ops::Deref,
 	path::PathBuf,
+	pin::Pin,
 	str::FromStr,
-	sync::{Arc, Mutex, MutexGuard, OnceLock},
+	sync::{Arc, OnceLock},
 };
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
+use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use fleet_shared::SecretData;
-use nix_eval::{Value, nix_go, nix_go_json, util::assert_warn};
-use openssh::{ControlPersist, SessionBuilder};
-use serde::de::DeserializeOwned;
+use nix_eval::{Store, Value, nix_go, nix_go_json, util::assert_warn};
+use remowt_client::{AgentBundle, Remowt};
+use remowt_endpoints::fs::FsClient;
+use remowt_link_shared::Address;
+use remowt_ui_prompt::auto::AutoPrompter;
+use remowt_ui_prompt::bifrost::PromptEndpoints;
+use remowt_ui_prompt::{PrependSourcePrompter, Source};
 use tabled::Tabled;
 use tempfile::NamedTempFile;
-use time::{UtcDateTime, format_description};
-use tracing::warn;
+use time::UtcDateTime;
+use tokio::task::spawn_blocking;
+use tracing::{info, warn};
 
-use crate::{
-	command::MyCommand,
-	fleetdata::{
-		FleetData, FleetSecretData, FleetSecretDistribution, FleetSecretPart, SecretOwner,
-	},
+use crate::fleetdata::{
+	FleetData, FleetSecretData, FleetSecretDistribution, FleetSecretPart, SecretOwner,
 };
 
 pub struct FleetConfigInternals {
@@ -36,7 +39,6 @@ pub struct FleetConfigInternals {
 	/// builtins.currentSystem
 	pub local_system: String,
 	pub data: Arc<FleetData>,
-	pub nix_args: Vec<OsString>,
 	/// fleet_config.config
 	pub config_field: Value,
 	/// flake.output
@@ -48,6 +50,8 @@ pub struct FleetConfigInternals {
 	pub default_pkgs: Value,
 	/// inputs.nixpkgs
 	pub nixpkgs: Value,
+
+	pub local_host: OnceLock<Arc<ConfigHost>>,
 }
 
 // TODO: Make field not pub
@@ -60,13 +64,6 @@ impl Deref for Config {
 	fn deref(&self) -> &Self::Target {
 		&self.0
 	}
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum EscalationStrategy {
-	Sudo,
-	Run0,
-	Su,
 }
 
 #[derive(Clone, PartialEq, Copy, Debug)]
@@ -115,7 +112,24 @@ pub struct ConfigHost {
 
 	// TODO: Move command helpers away with connectivity refactor
 	pub local: bool,
-	pub session: OnceLock<Arc<openssh::Session>>,
+	pub remowt: OnceLock<Remowt>,
+	nix_store: OnceLock<Arc<Store>>,
+	nix_plugin: tokio::sync::OnceCell<()>,
+}
+
+const NIX_PLUGIN_ID: u16 = 2;
+
+fn agents_dir() -> Result<PathBuf> {
+	std::env::var_os("REMOWT_AGENTS_DIR")
+		.map(PathBuf::from)
+		.or_else(|| option_env!("REMOWT_AGENTS_DIR").map(PathBuf::from))
+		.ok_or_else(|| {
+			anyhow!("no remowt-agents bundle; set REMOWT_AGENTS_DIR to a remowt-agents output")
+		})
+}
+
+fn agent_bundle() -> Result<AgentBundle> {
+	AgentBundle::from_dir(agents_dir()?)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -143,7 +157,7 @@ pub struct Generation {
 	#[tabled(rename = "Created at")]
 	pub datetime: UtcDateTime,
 	#[tabled(format = "{:?}")]
-	pub store_path: PathBuf,
+	pub store_path: Utf8PathBuf,
 	#[tabled(skip)]
 	pub location: GenerationStorage,
 }
@@ -153,68 +167,36 @@ impl Generation {
 	}
 }
 
-fn parse_generation_line(g: &str) -> Option<Generation> {
-	let mut parts = g.split_whitespace();
-	let id = parts.next()?;
-	let id: u32 = id.parse().ok()?;
-	let date = parts.next()?;
-	let time = parts.next()?;
-	let current = if let Some(current) = parts.next() {
-		if current == "(current)" {
-			Some(true)
-		} else {
-			None
-		}
-	} else {
-		Some(false)
-	};
-	let current = current?;
-	if parts.next().is_some() {
-		warn!("unexpected text after generation: {g}");
-	}
-
-	let format = format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
-		.expect("valid format");
-	let datetime = UtcDateTime::parse(&format!("{date} {time}"), &format).ok()?;
-
-	Some(Generation {
-		id,
-		current,
-		datetime,
-		store_path: PathBuf::new(),
-		location: GenerationStorage::Machine,
-	})
-}
-// TODO: Move command helpers away with connectivity refactor
 impl ConfigHost {
 	pub async fn list_generations(&self, profile: &str) -> Result<Vec<Generation>> {
-		let mut cmd = self.cmd("nix-env").await?;
-		cmd.comparg("--profile", format!("/nix/var/nix/profiles/{profile}"))
-			.arg("--list-generations")
-			.env("TZ", "UTC");
-		// Sudo is required because --list-generations tries to acquire profile lock
-		let data = cmd.sudo().run_string().await?;
-		let mut generations = data
-			.split('\n')
-			.map(|e| e.trim())
-			.filter(|&l| !l.is_empty())
-			.filter_map(|g| {
-				let generation = parse_generation_line(g);
-				if generation.is_none() {
-					warn!("bad generation: {g}");
-				};
-				generation
+		let plugin_id = self.ensure_nix_plugin().await?;
+		let nix = self
+			.remowt()
+			.await?
+			.plugin_endpoints::<remowt_fleet::NixClient<_>>(plugin_id);
+		let raw = nix
+			.list_generations(profile.to_owned())
+			.await
+			.map_err(|e| anyhow!("{e:?}"))?
+			.map_err(|e| anyhow!("{e}"))?;
+		raw.into_iter()
+			.map(|g| {
+				let id: u32 =
+					g.id.try_into()
+						.with_context(|| format!("generation id {} doesn't fit in u32", g.id))?;
+				let datetime = UtcDateTime::from_unix_timestamp(g.creation_time_unix)
+					.with_context(|| {
+						format!("invalid generation timestamp {}", g.creation_time_unix)
+					})?;
+				Ok(Generation {
+					id,
+					current: g.current,
+					datetime,
+					store_path: g.store_path,
+					location: GenerationStorage::Machine,
+				})
 			})
-			.collect::<Vec<_>>();
-		for ele in generations.iter_mut() {
-			let mut cmd = self.cmd("readlink").await?;
-			cmd.arg("--")
-				.arg(format!("/nix/var/nix/profiles/{profile}-{}-link", ele.id));
-			let path = cmd.run_string().await?;
-			ele.store_path = PathBuf::from(path.trim_end_matches("\n"));
-		}
-
-		Ok(generations)
+			.collect()
 	}
 
 	pub fn set_session_destination(&self, dest: String) {
@@ -236,7 +218,9 @@ impl ConfigHost {
 		if let Some(kind) = self.deploy_kind.get() {
 			return Ok(*kind);
 		}
-		let is_fleet_managed = match self.file_exists("/etc/FLEET_HOST").await {
+		let remowt = self.remowt().await?;
+		let fs = remowt.endpoints::<FsClient<_>>();
+		let is_fleet_managed = match fs.file_exists(Utf8PathBuf::from("/etc/FLEET_HOST")).await {
 			Ok(v) => v,
 			Err(e) => {
 				bail!("failed to query remote system kind: {e}");
@@ -252,6 +236,7 @@ impl ConfigHost {
 					1. manually create /etc/FLEET_HOST file on the target host,
 					2. use ?deploy_kind=fleet host argument if you're upgrading from older version of fleet
 					3. use ?deploy_kind=upgrade_to_fleet if you're upgrading from plain nixos to fleet-managed nixos
+				for installation use ?deploy_kind=nixos_install / ?deploy_kind=nixos_lustrate 
 			"}
 			);
 		}
@@ -259,139 +244,101 @@ impl ConfigHost {
 		let _ = self.deploy_kind.set(DeployKind::Fleet);
 		Ok(*self.deploy_kind.get().expect("deploy kind is just set"))
 	}
-	pub async fn escalation_strategy(&self) -> Result<EscalationStrategy> {
-		// Prefer sudo, as run0 has some gotchas with polkit
-		// and too many repeating prompts.
-		if (self.find_in_path("sudo").await).is_ok() {
-			return Ok(EscalationStrategy::Sudo);
+	async fn connection(&self) -> Result<Remowt> {
+		if let Some(conn) = self.remowt.get() {
+			return Ok(conn.clone());
 		}
-		if (self.find_in_path("run0").await).is_ok() {
-			return Ok(EscalationStrategy::Run0);
-		}
-		Ok(EscalationStrategy::Su)
-	}
-	async fn open_session(&self) -> Result<Arc<openssh::Session>> {
-		assert!(!self.local, "do not open ssh connection to local session");
-		// FIXME: TOCTOU
-		if let Some(session) = &self.session.get() {
-			return Ok((*session).clone());
-		};
-		let mut session = SessionBuilder::default();
-		session.control_persist(ControlPersist::ClosedAfterInitialConnection);
-
-		let dest = self.session_destination.get().unwrap_or(&self.name);
-		let session = session
-			.connect(&dest)
-			.await
-			.map_err(|e| anyhow!("ssh error while connecting to {}: {e:#?}", self.name))?;
-		let session = Arc::new(session);
-		self.session.set(session.clone()).expect("TOCTOU happened");
-		Ok(session)
-	}
-	pub async fn mktemp_dir(&self) -> Result<String> {
-		let mut cmd = self.cmd("mktemp").await?;
-		cmd.arg("-d");
-		let path = cmd.run_string().await?;
-		Ok(path.trim_end().to_owned())
-	}
-	pub async fn file_exists(&self, path: impl AsRef<OsStr>) -> Result<bool> {
-		let mut cmd = self.cmd("sh").await?;
-		cmd.arg("-c")
-			.arg("test -e \"$1\" && echo true || echo false")
-			.arg("_")
-			.arg(path);
-		cmd.run_value().await
-	}
-	pub async fn read_file_bin(&self, path: impl AsRef<OsStr>) -> Result<Vec<u8>> {
-		let mut cmd = self.cmd("cat").await?;
-		cmd.arg(path);
-		cmd.run_bytes().await
-	}
-	pub async fn read_file_text(&self, path: impl AsRef<OsStr>) -> Result<String> {
-		let mut cmd = self.cmd("cat").await?;
-		cmd.arg(path);
-		cmd.run_string().await
-	}
-	pub async fn read_dir(&self, path: impl AsRef<OsStr>) -> Result<Vec<String>> {
-		let mut cmd = self.cmd("ls").await?;
-		cmd.arg(path);
-		let out = cmd.run_string().await?;
-		let mut lines = out.split('\n');
-		if let Some(last) = lines.next_back() {
-			ensure!(last.is_empty(), "output of ls should end with newline");
-		}
-		Ok(lines.map(ToOwned::to_owned).collect())
-	}
-	#[allow(dead_code)]
-	pub async fn read_file_json<D: DeserializeOwned>(&self, path: impl AsRef<OsStr>) -> Result<D> {
-		let text = self.read_file_text(path).await?;
-		Ok(serde_json::from_str(&text)?)
-	}
-	pub async fn read_env(&self, env: &str) -> Result<String> {
-		let mut cmd = self.cmd("printenv").await?;
-		cmd.arg(env);
-		cmd.run_string().await
-	}
-	pub async fn find_in_path(&self, command: &str) -> Result<String> {
-		// // `which` is not a part of coreutils, and it might not exist on machine.
-		// let path = self.read_env("PATH").await?;
-		// // Assuming delimiter is :, we don't work with windows host, this check will be much
-		// // more sophisticated in remowt backend (and quicker, since actual PATH search will be done on remote machine)
-		// for ele in path.split(':') {
-		// 	let test_path = format!("{ele}/{cmd}");
-		// 	test -x etc
-		// }
-		// let mut cmd = self.cmd("printenv").await?;
-		// cmd.arg(env);
-		// Ok(cmd.run_string().await?)
-		// Assuming this is an environment issue if which doesn't exist, will be fixed with remowt.
-		let mut cmd = self
-			.cmd_escalation(
-				// Not used
-				EscalationStrategy::Su,
-				"which",
-			)
-			.await?;
-		cmd.arg(command);
-		cmd.run_string().await
-	}
-	pub async fn read_file_value<D: FromStr>(&self, path: impl AsRef<OsStr>) -> Result<D>
-	where
-		<D as FromStr>::Err: Display,
-	{
-		let text = self.read_file_text(path).await?;
-		D::from_str(&text).map_err(|e| anyhow!("failed to parse value: {e}"))
-	}
-	pub async fn cmd(&self, cmd: impl AsRef<OsStr>) -> Result<MyCommand> {
-		self.cmd_escalation(self.escalation_strategy().await?, cmd)
-			.await
-	}
-	pub async fn cmd_escalation(
-		&self,
-		escalation: EscalationStrategy,
-		cmd: impl AsRef<OsStr>,
-	) -> Result<MyCommand> {
-		if self.local {
-			Ok(MyCommand::new(escalation, cmd))
+		let bundle = agent_bundle()?;
+		let conn = if self.local {
+			Remowt::connect_local(&bundle)
+				.await
+				.context("starting local remowt agent")?
 		} else {
-			let session = self.open_session().await?;
-			Ok(MyCommand::new_on(escalation, cmd, session))
-		}
+			let dest = self
+				.session_destination
+				.get()
+				.cloned()
+				.unwrap_or_else(|| self.name.clone());
+			Remowt::connect(&dest, &bundle)
+				.await
+				.map_err(|e| anyhow!("remowt error while connecting to {}: {e:#?}", self.name))?
+		};
+		PromptEndpoints(PrependSourcePrompter {
+			prompter: AutoPrompter::new().await,
+			source: if self.local {
+				vec![]
+			} else {
+				vec![Source(std::borrow::Cow::Owned(format!(
+					"ssh host: {}",
+					self.name
+				)))]
+			},
+			description: "".to_owned(),
+		})
+		.register_endpoints(&mut conn.rpc());
+		let _ = self.remowt.set(conn);
+		Ok(self.remowt.get().expect("just set").clone())
 	}
-	pub async fn nix_cmd(&self) -> Result<MyCommand> {
-		let mut nix = self.cmd("nix").await?;
-		nix.args([
-			"--extra-experimental-features",
-			"nix-command",
-			"--extra-experimental-features",
-			"flakes",
-		]);
-		Ok(nix)
+
+	/// Client for this host's unprivileged agent.
+	pub async fn remowt(&self) -> Result<Remowt> {
+		Ok(self.connection().await?)
+	}
+
+	pub fn ensure_nix_plugin(&self) -> Pin<Box<dyn Future<Output = Result<u16>> + Send + '_>> {
+		Box::pin(async {
+			self.nix_plugin
+				.get_or_try_init(|| async {
+					let pkgs = self.pkgs()?;
+					let name = "remowt-plugin-fleet";
+					let plugin = nix_go!(pkgs[{ name }]);
+					let built = plugin
+						.build("out")
+						.context("failed to build the fleet nix plugin")?;
+					let copied = self
+						.remote_derivation(&built)
+						.await
+						.context("failed to copy the fleet nix plugin to the host store")?;
+					let bin = copied.join("bin/remowt-plugin-fleet");
+					self.remowt()
+						.await?
+						.run0_load_plugin_path(NIX_PLUGIN_ID, bin.as_str())
+						.await
+						.context("failed to load the fleet nix plugin")?;
+					self.remowt()
+						.await?
+						.rpc()
+						.wait_for_connection_to(Address::Plugin(NIX_PLUGIN_ID))
+						.await
+						.map_err(|e| anyhow!("failed to wait for plugin"))?;
+					anyhow::Ok(())
+				})
+				.await?;
+			Ok(NIX_PLUGIN_ID)
+		})
+	}
+
+	async fn nix_store(&self) -> Result<Arc<Store>> {
+		if let Some(store) = self.nix_store.get() {
+			return Ok(store.clone());
+		}
+		let conn = self.connection().await?;
+		let socket = match self.deploy_kind().await? {
+			DeployKind::NixosInstall => {
+				remowt_fleet::nix_store_socket(conn, "/mnt?require-sigs=false").await?
+			}
+			_ => remowt_fleet::nix_store_socket(conn, "auto").await?,
+		};
+		let uri = format!("unix://{}", socket.display());
+		let store = Arc::new(Store::open(&uri)?);
+		let _ = self.nix_store.set(store);
+		Ok(self.nix_store.get().expect("just set").clone())
 	}
 
 	pub async fn decrypt(&self, data: SecretData) -> Result<Vec<u8>> {
 		ensure!(data.encrypted, "secret is not encrypted");
-		let mut cmd = self.cmd("fleet-install-secrets").await?;
+		let remowt = self.remowt().await?;
+		let mut cmd = remowt.cmd("fleet-install-secrets");
 		cmd.arg("decrypt").eqarg("--secret", data.to_string());
 		let encoded = cmd
 			.sudo()
@@ -434,8 +381,9 @@ impl ConfigHost {
 		data: SecretData,
 		targets: BTreeSet<SecretOwner>,
 	) -> Result<SecretData> {
+		let remowt = self.remowt().await?;
 		ensure!(data.encrypted, "secret is not encrypted");
-		let mut cmd = self.cmd("fleet-install-secrets").await?;
+		let mut cmd = remowt.cmd("fleet-install-secrets");
 		cmd.arg("reencrypt").eqarg("--secret", data.to_string());
 		for target in targets {
 			let key = self.config.key(&target).await?;
@@ -451,74 +399,39 @@ impl ConfigHost {
 		Ok(data)
 	}
 	/// Returns path for futureproofing, as path might change i.e on conversion to CA
-	pub async fn remote_derivation(&self, path: &PathBuf) -> Result<PathBuf> {
+	pub async fn remote_derivation(&self, path: impl AsRef<Utf8Path>) -> Result<Utf8PathBuf> {
+		let path = path.as_ref().to_owned();
 		if self.local {
 			// Path is located locally, thus already trusted.
-			return Ok(path.to_owned());
+			return Ok(path);
 		}
-		let mut sign = MyCommand::new(
-			// TODO: Look at the current escalation strategy.
-			// ... or switch to run0 right after polkit update
-			EscalationStrategy::Sudo,
-			"nix",
-		);
-		sign.arg("store")
-			.arg("sign")
-			.comparg("--key-file", "/etc/nix/private-key")
-			.arg("-r")
-			.arg(&path);
-		if let Err(e) = sign.sudo().run_nix().await {
+		let sign: Pin<Box<dyn Future<Output = Result<()>> + Send>> = {
+			let path = path.clone();
+			Box::pin(async move {
+				let local = self.config.local_host();
+				let plugin_id = local.ensure_nix_plugin().await?;
+				let nix = local
+					.remowt()
+					.await?
+					.plugin_endpoints::<remowt_fleet::NixClient<_>>(plugin_id);
+				nix.sign_closure(path, Utf8PathBuf::from("/etc/nix/private-key"))
+					.await
+					.map_err(|e| anyhow!("{e:?}"))?
+					.map_err(|e| anyhow!("{e}"))?;
+				Ok(())
+			})
+		};
+		if let Err(e) = sign.await {
 			warn!("failed to sign store paths: {e}");
 		}
-		let mut nix = MyCommand::new(
-			// Not used
-			EscalationStrategy::Su,
-			"nix",
-		);
-		nix.arg("copy").arg("--substitute-on-destination");
-
-		let proto = if self.legacy_ssh_store.get().cloned().unwrap_or(false) {
-			"ssh"
-		} else {
-			"ssh-ng"
-		};
-
-		match self.deploy_kind().await? {
-			DeployKind::Fleet | DeployKind::UpgradeToFleet | DeployKind::NixosLustrate => {
-				nix.comparg("--to", format!("{proto}://{}", self.name));
-			}
-			DeployKind::NixosInstall => {
-				nix
-					// Signature checking makes no sense with remote-store store argument set, as we're not even interacting with remote nix daemon
-					.arg("--no-check-sigs")
-					.comparg(
-						"--to",
-						format!("{proto}://root@{}?remote-store=/mnt", self.name),
-					);
-			}
+		let store = self.nix_store().await?;
+		{
+			let path = path.clone();
+			spawn_blocking(move || nix_eval::copy_closure_to(&store, path.as_ref()))
+				.await?
+				.context("copying closure to remote store")?;
 		}
-		nix.arg(path);
-		nix.run_nix().await.context("nix copy")?;
-		Ok(path.to_owned())
-	}
-	pub async fn systemctl_stop(&self, name: &str) -> Result<()> {
-		let mut cmd = self.cmd("systemctl").await?;
-		cmd.arg("stop").arg(name);
-		cmd.sudo().run().await
-	}
-	pub async fn systemctl_start(&self, name: &str) -> Result<()> {
-		let mut cmd = self.cmd("systemctl").await?;
-		cmd.arg("start").arg(name);
-		cmd.sudo().run().await
-	}
-
-	pub async fn rm_file(&self, path: impl AsRef<OsStr>, sudo: bool) -> Result<()> {
-		let mut cmd = self.cmd("rm").await?;
-		cmd.arg("-f").arg(path);
-		if sudo {
-			cmd = cmd.sudo()
-		}
-		cmd.run().await
+		Ok(path)
 	}
 }
 
@@ -630,26 +543,32 @@ impl Config {
 		}
 		Ok(out)
 	}
-	pub fn local_host(&self) -> ConfigHost {
-		ConfigHost {
-			config: self.clone(),
-			name: "<virtual localhost>".to_owned(),
-			host_config: None,
-			nixos_config: OnceLock::new(),
-			nixos_unchecked_config: OnceLock::new(),
-			groups: {
-				let cell = OnceLock::new();
-				let _ = cell.set(vec![]);
-				cell
-			},
-			pkgs_override: Some(self.default_pkgs.clone()),
+	pub fn local_host(&self) -> Arc<ConfigHost> {
+		self.local_host
+			.get_or_init(|| {
+				Arc::new(ConfigHost {
+					config: self.clone(),
+					name: "<virtual localhost>".to_owned(),
+					host_config: None,
+					nixos_config: OnceLock::new(),
+					nixos_unchecked_config: OnceLock::new(),
+					groups: {
+						let cell = OnceLock::new();
+						let _ = cell.set(vec![]);
+						cell
+					},
+					pkgs_override: Some(self.default_pkgs.clone()),
 
-			local: true,
-			session: OnceLock::new(),
-			deploy_kind: OnceLock::new(),
-			session_destination: OnceLock::new(),
-			legacy_ssh_store: OnceLock::new(),
-		}
+					local: true,
+					remowt: OnceLock::new(),
+					nix_store: OnceLock::new(),
+					nix_plugin: tokio::sync::OnceCell::new(),
+					deploy_kind: OnceLock::new(),
+					session_destination: OnceLock::new(),
+					legacy_ssh_store: OnceLock::new(),
+				})
+			})
+			.clone()
 	}
 
 	pub fn preferred_hosts(
@@ -684,7 +603,9 @@ impl Config {
 
 			// TODO: Remove with connectivit refactor
 			local: self.localhost == name,
-			session: OnceLock::new(),
+			remowt: OnceLock::new(),
+			nix_store: OnceLock::new(),
+			nix_plugin: tokio::sync::OnceCell::new(),
 			deploy_kind: OnceLock::new(),
 			session_destination: OnceLock::new(),
 			legacy_ssh_store: OnceLock::new(),

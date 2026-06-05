@@ -8,15 +8,13 @@ rust-version.workspace = true
 default-run = "fleet"
 
 [dependencies]
-age = { workspace = true, features = ["armor"] }
 anyhow.workspace = true
-better-command.workspace = true
+camino.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
 fleet-base.workspace = true
-fleet-shared.workspace = true
 nix-eval.workspace = true
-nixlike.workspace = true
+remowt-fleet.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
@@ -24,30 +22,17 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
-abort-on-drop.workspace = true
-age-core.workspace = true
-async-trait.workspace = true
-base64.workspace = true
-chrono.workspace = true
 futures.workspace = true
-hostname.workspace = true
 itertools.workspace = true
-openssh.workspace = true
-peg.workspace = true
-regex.workspace = true
 shlex.workspace = true
 tabled.workspace = true
-time = { workspace = true, features = ["serde"] }
-tokio-util = { workspace = true, features = ["codec"] }
 
 human-repr = { workspace = true, optional = true }
 indicatif = { workspace = true, optional = true }
-nom.workspace = true
 opentelemetry.workspace = true
 opentelemetry-appender-tracing.workspace = true
 opentelemetry-exporter-env.workspace = true
 opentelemetry_sdk.workspace = true
-thiserror.workspace = true
 tracing-indicatif = { workspace = true, optional = true }
 tracing-opentelemetry.workspace = true
 
@@ -58,6 +43,5 @@ indicatif = [
 	"dep:tracing-indicatif",
 	"dep:indicatif",
 	"dep:human-repr",
-	"better-command/indicatif",
 	"nix-eval/indicatif",
 ]

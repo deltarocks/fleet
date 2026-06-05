@@ -1,10 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use anyhow::{Context, bail, ensure};
 use fleet_shared::SecretData;
 use itertools::Itertools;
 use nix_eval::{NativeFn, Value, await_in_nix, nix_go, nix_go_json};
+use remowt_endpoints::fs::FsClient;
+use remowt_link_shared::BifConfig;
 use serde::Deserialize;
 use tracing::{info, warn};
 
@@ -28,7 +30,7 @@ pub fn get_pkgs_and_generators(host_on: &ConfigHost, recipients: Vec<String>) ->
 	let pkgs = host_on.pkgs()?;
 	let default_mk_secret_generators = nix_go!(pkgs.mkSecretGenerators);
 	let generators = nix_go!(default_mk_secret_generators(Obj { recipients }));
-	Ok(pkgs.clone().attrs_update(generators)?)
+	pkgs.clone().attrs_update(generators)
 }
 pub fn get_default_pkgs_and_generators(config: &Config) -> Result<Value> {
 	let host_on = config.local_host();
@@ -91,12 +93,18 @@ pub async fn generate(
 			let impure_on: Option<String> = nix_go_json!(default_generator_drv.impureOn);
 
 			let host_on = if let Some(on) = &impure_on {
-				config
-					.host(on)
-					.context("failed to get secret generation target host")?
+				Arc::new(
+					config
+						.host(on)
+						.context("failed to get secret generation target host")?,
+				)
 			} else {
 				config.local_host()
 			};
+
+			let remowt = host_on.remowt().await?;
+			let fs = remowt.endpoints::<FsClient<BifConfig>>();
+
 			let mut recipients = Vec::new();
 			for owner in &expectations.owners {
 				recipients.push(config.key(owner).await?);
@@ -116,12 +124,13 @@ pub async fn generate(
 				.context("failed to copy generator to target host")?;
 
 			// TODO: Remove destdir after everything is done
-			let out_parent = host_on
+			let out_parent = fs
 				.mktemp_dir()
 				.await
+				.map_err(|e| anyhow!("{e:?}"))
 				.context("failed to prepare generator output dir on target host")?;
-			let out = format!("{out_parent}/out");
-			let mut generator_cmd = host_on.cmd(generator).await?;
+			let out = out_parent.join("out");
+			let mut generator_cmd = remowt.cmd(generator);
 			generator_cmd.env("out", &out);
 			if impure_on.is_none() {
 				let project_path: String = config
@@ -138,7 +147,7 @@ pub async fn generate(
 				.context("failed to run impure generator")?;
 
 			{
-				let marker = host_on.read_file_text(format!("{out}/marker")).await?;
+				let marker = fs.read_file_text(out.join("marker")).await?;
 				ensure!(
 					marker == "SUCCESS",
 					"impure generator ended prematurely, secret generation failed"
@@ -147,15 +156,16 @@ pub async fn generate(
 
 			let mut missing_parts = expectations.parts.clone();
 			let mut parts = BTreeMap::new();
-			for part in host_on.read_dir(&out).await? {
+			for part in fs.read_dir(&out).await? {
+				let part = part.into_string();
 				if part == "created_at" || part == "expires_at" || part == "marker" {
 					continue;
 				}
 				let Some(part_def) = missing_parts.remove(&part) else {
 					bail!("secret generator has produced an unexpected part: {part}");
 				};
-				let contents: SecretData = host_on
-					.read_file_text(format!("{out}/{part}"))
+				let contents: SecretData = fs
+					.read_file_text(out.join("part"))
 					.await?
 					.parse()
 					.map_err(|e| anyhow!("failed to decode secret {out:?} part {part:?}: {e}"))?;
@@ -178,11 +188,12 @@ pub async fn generate(
 				);
 			}
 
-			let created_at = host_on.read_file_value(format!("{out}/created_at")).await?;
-			let expires_at = host_on
-				.read_file_value(format!("{out}/expires_at"))
-				.await
-				.ok();
+			let created_at = fs.read_file_value(out.join("created_at")).await??;
+			let expires_at = match fs.read_file_value(out.join("expires_at")).await {
+				Ok(v) => Some(v?),
+				Err(remowt_endpoints::fs::Error::NotFound) => None,
+				Err(e) => return Err(e.into()),
+			};
 
 			let new_data = FleetSecretData {
 				created_at,

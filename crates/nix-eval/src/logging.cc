@@ -96,7 +96,9 @@ struct TracingLogger : Logger {
 
 extern "C" {
 void apply_tracing_logger() {
-  logger = std::make_unique<TracingLogger>();
+  auto old = logger;
+  logger = new TracingLogger();
+  delete old;
   // verbosity = lvlVomit;
 }
 rust::Box<ErrorInfoBuilder>

@@ -499,7 +499,9 @@ impl StartActivityBuilder {
 			} else if level == Level::INFO {
 				info!(target: "nix", "{}", s)
 			} else if level == Level::DEBUG {
-				debug!(target: "nix", "{}", s)
+				if s != "querying info about missing paths" {
+					debug!(target: "nix", "{}", s)
+				}
 			} else {
 				trace!(target: "nix", "{}", s)
 			}
@@ -583,7 +585,9 @@ fn emit_log(lvl: u32, v: &[u8]) {
 	} else if level == Level::INFO {
 		info!(target: "nix", "{v}")
 	} else if level == Level::DEBUG {
-		debug!(target: "nix", "{v}")
+		if v != "querying info about missing paths" {
+			debug!(target: "nix", "{v}")
+		}
 	} else {
 		trace!(target: "nix", "{v}")
 	}

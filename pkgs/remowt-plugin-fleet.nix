@@ -1,19 +1,17 @@
 {
   lib,
   craneLib,
-  installShellFiles,
   inputs,
 
   stdenv,
   pkg-config,
   rustPlatform,
-  rofi,
 }:
 let
   system = stdenv.hostPlatform.system;
 in
 craneLib.buildPackage rec {
-  pname = "fleet";
+  pname = "remowt-plugin-fleet";
   src = lib.cleanSourceWith {
     src = ../.;
     filter =
@@ -26,26 +24,13 @@ craneLib.buildPackage rec {
 
   cargoExtraArgs = "--locked -p ${pname}";
 
-  REMOWT_AGENTS_DIR = "${inputs.remowt-agents.packages.${system}.remowt-agents}";
-  # TODO: built-in fleet prompter should be a prodash widget, or it should require
-  # tty remowt prompter running on host machine idk.
-  ROFI = "${rofi}/bin/rofi";
-
   buildInputs = [
     inputs.nix.packages.${system}.nix-expr-c
     inputs.nix.packages.${system}.nix-flake-c
     inputs.nix.packages.${system}.nix-fetchers-c
   ];
   nativeBuildInputs = [
-    installShellFiles
     pkg-config
     rustPlatform.bindgenHook
   ];
-
-  postInstall = ''
-    for shell in bash fish zsh; do
-      installShellCompletion --cmd fleet \
-        --$shell <($out/bin/fleet complete --shell $shell)
-    done
-  '';
 }

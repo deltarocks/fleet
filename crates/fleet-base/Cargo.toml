@@ -5,9 +5,15 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+remowt-client.workspace = true
+remowt-endpoints.workspace = true
+remowt-fleet.workspace = true
+remowt-link-shared.workspace = true
+remowt-ui-prompt.workspace = true
+
 age.workspace = true
 anyhow.workspace = true
-better-command.workspace = true
+camino.workspace = true
 chrono.workspace = true
 clap = { workspace = true, features = ["derive"] }
 fleet-shared.workspace = true
@@ -18,15 +24,11 @@ itertools.workspace = true
 nix-eval.workspace = true
 nixlike.workspace = true
 nom.workspace = true
-openssh.workspace = true
 rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tabled.workspace = true
 tempfile.workspace = true
-thiserror.workspace = true
 time = { workspace = true, features = ["parsing"] }
 tokio.workspace = true
-tokio-util = { workspace = true, features = ["codec"] }
-toml_edit.workspace = true
 tracing.workspace = true

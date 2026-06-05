@@ -1,9 +1,8 @@
 use std::{
 	collections::{BTreeMap, BTreeSet},
 	env::current_dir,
-	ffi::OsString,
 	str::FromStr,
-	sync::{Arc, Mutex},
+	sync::{Arc, OnceLock},
 };
 
 use anyhow::{Context, Result, bail};
@@ -196,7 +195,7 @@ impl FleetOpts {
 	}
 
 	// TODO: Config should be detached from opts.
-	pub fn build(&self, nix_args: Vec<OsString>, assert: bool) -> Result<Config> {
+	pub fn build(&self, assert: bool) -> Result<Config> {
 		let cwd = current_dir()?;
 		let mut directory = cwd.clone();
 		let mut fleet_data_path = directory.join("fleet.nix");
@@ -274,11 +273,11 @@ impl FleetOpts {
 			data,
 			flake_outputs: flake,
 			local_system: self.local_system.clone(),
-			nix_args,
 			config_field,
 			default_pkgs,
 			nixpkgs,
 			localhost: self.localhost.to_owned(),
+			local_host: OnceLock::new(),
 		}));
 
 		PRIMOPS_DATA

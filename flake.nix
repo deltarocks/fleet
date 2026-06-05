@@ -23,6 +23,13 @@
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    remowt-agents = {
+      url = "git+file:/home/lach/build/remowt-agents";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.flake-parts.follows = "flake-parts";
+      inputs.crane.follows = "crane";
+      inputs.shelly.follows = "shelly";
+    };
     # DeterminateSystem's nix fork is controversial, but I don't mind it,
     # and it has lazy-trees support which is useful for fleet.
     nix = {
@@ -147,7 +154,7 @@
             packages = lib.mkIf deployerSystem (
               let
                 packages = pkgs.callPackages ./pkgs {
-                  inherit craneLib inputs';
+                  inherit craneLib inputs;
                 };
               in
               packages // { default = packages.fleet; }

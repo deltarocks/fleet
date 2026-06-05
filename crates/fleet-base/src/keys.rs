@@ -31,7 +31,8 @@ impl Config {
 		} else {
 			warn!("Loading key for {}", host);
 			let host = self.host(host)?;
-			let mut cmd = host.cmd("cat").await?;
+			let remowt = host.remowt().await?;
+			let mut cmd = remowt.cmd("cat");
 			cmd.arg("/etc/ssh/ssh_host_ed25519_key.pub");
 			let key = cmd.run_string().await?;
 			self.update_key(&host.name, key.clone());

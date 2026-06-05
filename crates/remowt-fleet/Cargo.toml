@@ -1,0 +1,20 @@
+[package]
+name = "remowt-fleet"
+description = "Remowt endpoints for fleet"
+version.workspace = true
+edition = "2021"
+
+[dependencies]
+bifrostlink.workspace = true
+
+remowt-client.workspace = true
+remowt-endpoints.workspace = true
+
+anyhow.workspace = true
+camino.workspace = true
+nix-eval.workspace = true
+serde = { workspace = true }
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util", "net", "process", "rt"] }
+tracing.workspace = true
+uuid.workspace = true

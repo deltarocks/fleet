@@ -42,10 +42,12 @@ in
         default = config.nixpkgs.buildUsing;
         defaultText = literalExpression "config.nixpkgs.buildUsing";
       };
-      config.nixos = {
-        inherit _file;
-        nixpkgs.overlays = config.nixpkgs.overlays;
-      };
+      config.nixos =
+        { inputs', ... }:
+        {
+          inherit _file;
+          nixpkgs.overlays = config.nixpkgs.overlays;
+        };
     };
   };
 }

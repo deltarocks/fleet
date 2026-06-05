@@ -11,5 +11,3 @@ itertools.workspace = true
 linked-hash-map.workspace = true
 peg.workspace = true
 serde.workspace = true
-serde-transcode.workspace = true
-serde_json.workspace = true

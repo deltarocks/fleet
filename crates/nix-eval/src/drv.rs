@@ -66,7 +66,13 @@ impl Drop for Derivation {
 #[derive(Debug, Deserialize)]
 pub struct DrvParsed {
 	pub inputs: DrvInputs,
-	pub outputs: HashMap<String, serde_json::Value>,
+	pub outputs: HashMap<String, DrvParsedOutput>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DrvParsedOutput {
+	#[serde(default)]
+	pub path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -82,18 +88,19 @@ pub struct DrvInputEntry {
 	pub outputs: Vec<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DrvGraph {
 	pub root: String,
 	pub nodes: HashMap<String, DrvNode>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DrvNode {
 	pub name: String,
 	pub input_drvs: HashMap<String, Vec<String>>,
 	pub input_srcs: Vec<String>,
-	pub outputs: Vec<String>,
+	// TODO: CA outputs without a known paths are skipped
+	pub outputs: HashMap<String, String>,
 }
 
 impl DrvGraph {
@@ -124,18 +131,58 @@ impl DrvGraph {
 				}
 			}
 
+			let outputs: HashMap<String, String> = parsed
+				.outputs
+				.into_iter()
+				.filter_map(|(name, out)| out.path.map(|p| (name, to_absolute_store_path(&sd, &p))))
+				.collect();
+
 			nodes.insert(
 				path.clone(),
 				DrvNode {
 					name: extract_drv_name(&path),
 					input_drvs,
 					input_srcs: parsed.inputs.srcs,
-					outputs: parsed.outputs.into_keys().collect(),
+					outputs,
 				},
 			);
 		}
 
 		Ok(Self { root, nodes })
+	}
+
+	pub fn wanted_outputs(&self, root_outputs: &[String]) -> HashMap<String, Vec<String>> {
+		let mut wanted: HashMap<String, HashSet<String>> = HashMap::new();
+		wanted.insert(self.root.clone(), root_outputs.iter().cloned().collect());
+
+		let mut queue: VecDeque<String> = VecDeque::new();
+		queue.push_back(self.root.clone());
+		while let Some(path) = queue.pop_front() {
+			let Some(node) = self.nodes.get(&path) else {
+				continue;
+			};
+			for (dep_path, dep_outputs) in &node.input_drvs {
+				let entry = wanted.entry(dep_path.clone()).or_default();
+				let mut changed = false;
+				for o in dep_outputs {
+					if entry.insert(o.clone()) {
+						changed = true;
+					}
+				}
+				if changed {
+					queue.push_back(dep_path.clone());
+				}
+			}
+		}
+
+		wanted
+			.into_iter()
+			.map(|(k, v)| {
+				let mut v: Vec<_> = v.into_iter().collect();
+				v.sort();
+				(k, v)
+			})
+			.collect()
 	}
 }
 

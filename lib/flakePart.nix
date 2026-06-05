@@ -57,7 +57,7 @@ in
             modules = (import ../modules/module-list.nix) ++ [
               module
               (
-                { inputs', ... }:
+                { inputs, ... }:
                 {
                   config = {
                     data = if isPath data then import data else data;
@@ -66,12 +66,13 @@ in
                       (final: prev: {
                         inherit
                           (import ../pkgs {
-                            inherit (prev) callPackage;
-                            inherit inputs';
+                            inherit (final) callPackage;
+                            inherit inputs;
                             craneLib = crane.mkLib prev;
                           })
                           fleet-install-secrets
                           fleet-generator-helper
+                          remowt-plugin-fleet
                           ;
                       })
                     ];
