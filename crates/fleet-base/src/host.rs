@@ -24,7 +24,7 @@ use tabled::Tabled;
 use tempfile::NamedTempFile;
 use time::UtcDateTime;
 use tokio::task::spawn_blocking;
-use tracing::{info, warn};
+use tracing::warn;
 
 use crate::fleetdata::{
 	FleetData, FleetSecretData, FleetSecretDistribution, FleetSecretPart, SecretOwner,
@@ -282,7 +282,7 @@ impl ConfigHost {
 
 	/// Client for this host's unprivileged agent.
 	pub async fn remowt(&self) -> Result<Remowt> {
-		Ok(self.connection().await?)
+		self.connection().await
 	}
 
 	pub fn ensure_nix_plugin(&self) -> Pin<Box<dyn Future<Output = Result<u16>> + Send + '_>> {
@@ -310,7 +310,7 @@ impl ConfigHost {
 						.rpc()
 						.wait_for_connection_to(Address::Plugin(NIX_PLUGIN_ID))
 						.await
-						.map_err(|e| anyhow!("failed to wait for plugin"))?;
+						.map_err(|_| anyhow!("failed to wait for plugin"))?;
 					anyhow::Ok(())
 				})
 				.await?;
@@ -427,8 +427,8 @@ impl ConfigHost {
 		let store = self.nix_store().await?;
 		{
 			let path = path.clone();
-			let store = eval_store();
-			spawn_blocking(move || store.copy_to(&store, path.as_ref()))
+			let eval_store = eval_store();
+			spawn_blocking(move || eval_store.copy_to(&store, path.as_ref()))
 				.await
 				.expect("copy_to panicked")
 				.context("copying closure to remote store")?;

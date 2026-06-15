@@ -1,4 +1,4 @@
-use std::{env::current_dir, os::unix::fs::symlink, path::PathBuf};
+use std::{env::current_dir, os::unix::fs::symlink};
 
 use anyhow::Result;
 use camino::Utf8PathBuf;
@@ -101,7 +101,7 @@ impl BuildSystems {
 impl Deploy {
 	pub async fn run(self, config: &Config, opts: &FleetOpts) -> Result<()> {
 		let hosts = opts.filter_skipped(config.list_hosts()?)?;
-		let mut tasks = FuturesUnordered::new();
+		let tasks = FuturesUnordered::new();
 		for host in hosts.into_iter() {
 			let config = config.clone();
 			let span = info_span!("deploy", host = field::display(&host.name));
