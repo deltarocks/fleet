@@ -24,7 +24,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     remowt-agents = {
-      url = "git+file:/home/lach/build/remowt-agents";
+      url = "git+https://gerrit.delta.rocks/remowt";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.flake-parts.follows = "flake-parts";
       inputs.crane.follows = "crane";

@@ -188,15 +188,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1781491431,
-        "rev": "c8dca760c1f13e8b65677bac7b21abb487d745c0",
+        "lastModified": 1781491763,
+        "ref": "refs/heads/trunk",
+        "rev": "8b18e8b236d428ed8fbf5818272d17f5f538c13c",
         "revCount": 40,
         "type": "git",
-        "url": "file:/home/lach/build/remowt-agents"
+        "url": "https://gerrit.delta.rocks/remowt"
       },
       "original": {
         "type": "git",
-        "url": "file:/home/lach/build/remowt-agents"
+        "url": "https://gerrit.delta.rocks/remowt"
       }
     },
     "root": {
