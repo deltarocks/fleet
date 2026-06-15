@@ -24,8 +24,7 @@ use human_repr::HumanCount;
 #[cfg(feature = "indicatif")]
 use indicatif::{ProgressState, ProgressStyle};
 use nix_eval::{
-	add_file_to_store, gc_register_my_thread, gc_unregister_my_thread, init_libraries,
-	init_tokio_for_nix,
+	eval_store, gc_register_my_thread, gc_unregister_my_thread, init_libraries, init_tokio_for_nix,
 };
 use opentelemetry::trace::TracerProvider;
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
@@ -33,6 +32,7 @@ use opentelemetry_exporter_env::{
 	OtlpBaseSettings, OtlpLogsSettings, OtlpTracesSettings, ResolvedOtlpSettings,
 };
 use opentelemetry_sdk::{logs::SdkLoggerProvider, trace::SdkTracerProvider};
+use tokio::task::spawn_blocking;
 use tracing::{Instrument, error, info, info_span};
 #[cfg(feature = "indicatif")]
 use tracing_indicatif::IndicatifLayer;
@@ -59,7 +59,8 @@ impl Prefetch {
 				Utf8PathBuf::try_from(entry.path()).context("prefetch path should be utf8")?;
 			let span = info_span!("prefetching", name = %name);
 			tasks.push(async move {
-				let added = tokio::task::spawn_blocking(move || add_file_to_store(&name, &path))
+				let store = eval_store();
+				let added = spawn_blocking(move || store.add_file(&name, &path))
 					.instrument(span.clone())
 					.await??;
 				let _g = span.enter();
@@ -121,9 +122,7 @@ async fn run_command(config: &Config, opts: FleetOpts, command: Opts) -> Result<
 		Opts::Prefetch(p) => p.run(config).await?,
 		Opts::Tf(t) => t.run(config).await?,
 		// TODO: actually parse commands before starting the async runtime
-		Opts::Complete(c) => {
-			tokio::task::spawn_blocking(move || c.run(RootOpts::command())).await?
-		}
+		Opts::Complete(c) => spawn_blocking(move || c.run(RootOpts::command())).await?,
 	};
 	Ok(())
 }

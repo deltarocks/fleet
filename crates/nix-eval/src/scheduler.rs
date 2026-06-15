@@ -1,12 +1,16 @@
 use std::collections::{HashMap, HashSet};
+use std::mem;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
+use camino::{Utf8Path, Utf8PathBuf};
 use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::{Semaphore, broadcast};
+use tokio::task::spawn_blocking;
 use tracing::{debug, info, instrument, warn};
 
 use crate::drv::DrvGraph;
+use crate::{Store, eval_store};
 
 #[derive(Clone, Debug)]
 pub enum BuildEvent {
@@ -17,31 +21,32 @@ pub enum BuildEvent {
 		satisfied: usize,
 	},
 	DrvStarted {
-		drv_path: String,
+		drv_path: Utf8PathBuf,
 		name: String,
 		wanted: Vec<String>,
 	},
 	DrvSkipped {
-		drv_path: String,
+		drv_path: Utf8PathBuf,
 		name: String,
 	},
 	DrvFinished {
-		drv_path: String,
+		drv_path: Utf8PathBuf,
 		name: String,
 	},
 	DrvFailed {
-		drv_path: String,
+		drv_path: Utf8PathBuf,
 		name: String,
 		error: String,
 	},
 	DrvCancelled {
-		drv_path: String,
+		drv_path: Utf8PathBuf,
 		name: String,
-		failed_dep: String,
+		failed_dep: Utf8PathBuf,
 	},
 }
 
 pub struct Scheduler {
+	store: Arc<Store>,
 	parallelism: usize,
 	events: broadcast::Sender<BuildEvent>,
 }
@@ -51,6 +56,7 @@ impl Scheduler {
 		let parallelism = parallelism.max(1);
 		let (events, _) = broadcast::channel(1024);
 		Self {
+			store: eval_store(),
 			parallelism,
 			events,
 		}
@@ -71,7 +77,7 @@ impl Scheduler {
 	async fn substitute_prepass(
 		&self,
 		graph: &DrvGraph,
-		wanted: &HashMap<String, Vec<String>>,
+		wanted: &HashMap<Utf8PathBuf, Vec<String>>,
 	) -> Result<()> {
 		let paths = collect_substitute_paths(graph, wanted);
 		if paths.is_empty() {
@@ -82,7 +88,8 @@ impl Scheduler {
 			.send(BuildEvent::SubstitutePrepassStarted { paths: paths.len() });
 		debug!("substitute pre-pass: {} paths", paths.len());
 
-		let satisfied = tokio::task::spawn_blocking(move || crate::substitute_paths(&paths))
+		let store = self.store.clone();
+		let satisfied = spawn_blocking(move || store.substitute_paths(&paths))
 			.await
 			.expect("substitute pre-pass task should not panic")?;
 
@@ -95,14 +102,14 @@ impl Scheduler {
 	async fn build_topo(
 		&self,
 		graph: &Arc<DrvGraph>,
-		wanted: HashMap<String, Vec<String>>,
+		wanted: HashMap<Utf8PathBuf, Vec<String>>,
 	) -> Result<()> {
-		let mut indeg: HashMap<String, usize> = graph
+		let mut indeg: HashMap<Utf8PathBuf, usize> = graph
 			.nodes
 			.iter()
 			.map(|(k, n)| (k.clone(), n.input_drvs.len()))
 			.collect();
-		let mut dependents: HashMap<String, Vec<String>> = HashMap::new();
+		let mut dependents: HashMap<Utf8PathBuf, Vec<Utf8PathBuf>> = HashMap::new();
 		for (path, node) in &graph.nodes {
 			for dep in node.input_drvs.keys() {
 				dependents
@@ -113,18 +120,18 @@ impl Scheduler {
 		}
 
 		let sem = Arc::new(Semaphore::new(self.parallelism));
-		let mut ready: Vec<String> = indeg
+		let mut ready: Vec<Utf8PathBuf> = indeg
 			.iter()
 			.filter(|(_, d)| **d == 0)
 			.map(|(k, _)| k.clone())
 			.collect();
 		let mut in_flight = FuturesUnordered::new();
-		let mut failed: HashMap<String, String> = HashMap::new();
+		let mut failed: HashMap<Utf8PathBuf, String> = HashMap::new();
 		// Tainted = transitively depends on a failed drv
-		let mut tainted: HashMap<String, String> = HashMap::new();
+		let mut tainted: HashMap<Utf8PathBuf, Utf8PathBuf> = HashMap::new();
 
 		loop {
-			let batch: Vec<String> = std::mem::take(&mut ready);
+			let batch: Vec<Utf8PathBuf> = mem::take(&mut ready);
 			for path in batch {
 				if let Some(failed_dep) = tainted.get(&path) {
 					let name = graph
@@ -145,6 +152,7 @@ impl Scheduler {
 				let events = self.events.clone();
 				let graph = graph.clone();
 				let wanted_here = wanted.get(&path).cloned().unwrap_or_default();
+				let store = self.store.clone();
 				in_flight.push(tokio::spawn(async move {
 					let _permit = sem.acquire_owned().await.expect("semaphore not closed");
 					let node = graph
@@ -158,7 +166,7 @@ impl Scheduler {
 						&& wanted_here.iter().all(|o| {
 							node.outputs
 								.get(o)
-								.map(|p| crate::is_valid_path(p).unwrap_or(false))
+								.map(|p| store.is_valid_path(p))
 								.unwrap_or(false)
 						});
 					if all_valid {
@@ -176,8 +184,9 @@ impl Scheduler {
 					});
 
 					let path_for_build = path.clone();
-					let res = tokio::task::spawn_blocking(move || {
-						crate::build_drv_outputs(&path_for_build, &wanted_here)
+					let store = store.clone();
+					let res = spawn_blocking(move || {
+						store.build_drv_outputs(&path_for_build, &wanted_here)
 					})
 					.await
 					.expect("build task should not panic");
@@ -259,10 +268,10 @@ impl Scheduler {
 }
 
 fn propagate_done(
-	dependents: &HashMap<String, Vec<String>>,
-	indeg: &mut HashMap<String, usize>,
-	ready: &mut Vec<String>,
-	finished: &str,
+	dependents: &HashMap<Utf8PathBuf, Vec<Utf8PathBuf>>,
+	indeg: &mut HashMap<Utf8PathBuf, usize>,
+	ready: &mut Vec<Utf8PathBuf>,
+	finished: &Utf8Path,
 ) {
 	if let Some(deps) = dependents.get(finished) {
 		for d in deps {
@@ -276,11 +285,11 @@ fn propagate_done(
 }
 
 fn mark_tainted(
-	dependents: &HashMap<String, Vec<String>>,
-	failed: &str,
-	tainted: &mut HashMap<String, String>,
+	dependents: &HashMap<Utf8PathBuf, Vec<Utf8PathBuf>>,
+	failed: &Utf8Path,
+	tainted: &mut HashMap<Utf8PathBuf, Utf8PathBuf>,
 ) {
-	let mut queue: Vec<String> = dependents.get(failed).cloned().unwrap_or_default();
+	let mut queue: Vec<Utf8PathBuf> = dependents.get(failed).cloned().unwrap_or_default();
 	while let Some(node) = queue.pop() {
 		if tainted
 			.entry(node.clone())
@@ -298,20 +307,17 @@ fn mark_tainted(
 	}
 }
 
-fn path_to_root(graph: &DrvGraph, from: &str) -> Vec<String> {
-	let mut dependents: HashMap<&str, Vec<&str>> = HashMap::new();
+fn path_to_root(graph: &DrvGraph, from: &Utf8Path) -> Vec<String> {
+	let mut dependents: HashMap<&Utf8Path, Vec<&Utf8Path>> = HashMap::new();
 	for (path, node) in &graph.nodes {
 		for dep in node.input_drvs.keys() {
-			dependents
-				.entry(dep.as_str())
-				.or_default()
-				.push(path.as_str());
+			dependents.entry(dep).or_default().push(path);
 		}
 	}
 
 	let mut chain: Vec<String> = vec![node_name(graph, from)];
 	let mut cur = from;
-	let mut seen: HashSet<&str> = HashSet::new();
+	let mut seen: HashSet<&Utf8Path> = HashSet::new();
 	seen.insert(cur);
 	while cur != graph.root.as_str() {
 		let Some(next) = dependents.get(cur).and_then(|v| v.first().copied()) else {
@@ -326,19 +332,19 @@ fn path_to_root(graph: &DrvGraph, from: &str) -> Vec<String> {
 	chain
 }
 
-fn node_name(graph: &DrvGraph, path: &str) -> String {
+fn node_name(graph: &DrvGraph, path: &Utf8Path) -> String {
 	graph
 		.nodes
 		.get(path)
 		.map(|n| n.name.clone())
-		.unwrap_or_else(|| path.to_owned())
+		.unwrap_or_else(|| path.to_string())
 }
 
 fn collect_substitute_paths(
 	graph: &DrvGraph,
-	wanted: &HashMap<String, Vec<String>>,
-) -> Vec<String> {
-	let mut paths: HashSet<String> = HashSet::new();
+	wanted: &HashMap<Utf8PathBuf, Vec<String>>,
+) -> Vec<Utf8PathBuf> {
+	let mut paths: HashSet<Utf8PathBuf> = HashSet::new();
 	for node in graph.nodes.values() {
 		for src in &node.input_srcs {
 			paths.insert(src.clone());

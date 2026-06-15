@@ -1,41 +1,21 @@
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::ffi::CString;
 
 use anyhow::{Result, bail};
+use camino::{Utf8Component, Utf8Path, Utf8PathBuf};
 use serde::Deserialize;
 
 use crate::nix_raw::{derivation_free, derivation_to_json, store_drv_from_store_path};
-use crate::{copy_nix_str, with_store_context};
-
-fn store_dir() -> Result<String> {
-	let mut out = String::new();
-	with_store_context(|c, store, _| unsafe {
-		crate::nix_raw::store_get_storedir(c, store, Some(copy_nix_str), (&raw mut out).cast())
-	})?;
-	Ok(out)
-}
-
-fn to_absolute_store_path(store_dir: &str, path: &str) -> String {
-	if path.starts_with('/') {
-		path.to_owned()
-	} else {
-		format!("{store_dir}/{path}")
-	}
-}
+use crate::{Store, copy_nix_str, with_default_context};
 
 pub struct Derivation(*mut crate::nix_raw::derivation);
 unsafe impl Send for Derivation {}
 
 impl Derivation {
-	pub fn from_path(drv_path: &str) -> Result<Self> {
-		let path_c = CString::new(drv_path)?;
-		let store_path = with_store_context(|c, store, _| unsafe {
-			crate::nix_raw::store_parse_path(c, store, path_c.as_ptr())
-		})?;
-		let drv = with_store_context(|c, store, _| unsafe {
-			store_drv_from_store_path(c, store, store_path)
+	pub fn from_path(store: &Store, drv_path: &Utf8Path) -> Result<Self> {
+		let store_path = store.parse_path(drv_path)?;
+		let drv = with_default_context(|c, _| unsafe {
+			store_drv_from_store_path(c, store.as_ptr(), store_path.as_ptr())
 		});
-		unsafe { crate::nix_raw::store_path_free(store_path) };
 		let drv = drv?;
 		if drv.is_null() {
 			bail!("failed to read derivation from {drv_path}");
@@ -45,7 +25,7 @@ impl Derivation {
 
 	pub fn to_json_string(&self) -> Result<String> {
 		let mut out = String::new();
-		with_store_context(|c, _, _| unsafe {
+		with_default_context(|c, _| unsafe {
 			derivation_to_json(c, self.0, Some(copy_nix_str), (&raw mut out).cast())
 		})?;
 		Ok(out)
@@ -78,9 +58,9 @@ pub struct DrvParsedOutput {
 #[derive(Debug, Deserialize)]
 pub struct DrvInputs {
 	#[serde(default)]
-	pub srcs: Vec<String>,
+	pub srcs: Vec<Utf8PathBuf>,
 	#[serde(default)]
-	pub drvs: HashMap<String, DrvInputEntry>,
+	pub drvs: HashMap<Utf8PathBuf, DrvInputEntry>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -90,23 +70,23 @@ pub struct DrvInputEntry {
 
 #[derive(Debug, Clone)]
 pub struct DrvGraph {
-	pub root: String,
-	pub nodes: HashMap<String, DrvNode>,
+	pub root: Utf8PathBuf,
+	pub nodes: HashMap<Utf8PathBuf, DrvNode>,
 }
 
 #[derive(Debug, Clone)]
 pub struct DrvNode {
 	pub name: String,
-	pub input_drvs: HashMap<String, Vec<String>>,
-	pub input_srcs: Vec<String>,
+	pub input_drvs: HashMap<Utf8PathBuf, Vec<String>>,
+	pub input_srcs: Vec<Utf8PathBuf>,
 	// TODO: CA outputs without a known paths are skipped
-	pub outputs: HashMap<String, String>,
+	pub outputs: HashMap<String, Utf8PathBuf>,
 }
 
 impl DrvGraph {
-	pub fn resolve(drv_path: &str) -> Result<Self> {
-		let sd = store_dir()?;
-		let root = to_absolute_store_path(&sd, drv_path);
+	pub fn resolve(store: &Store, drv_path: &Utf8Path) -> Result<Self> {
+		let sd = store.store_dir()?;
+		let root = sd.join(drv_path);
 
 		let mut nodes = HashMap::new();
 		let mut queue = VecDeque::new();
@@ -115,14 +95,14 @@ impl DrvGraph {
 		visited.insert(root.clone());
 
 		while let Some(path) = queue.pop_front() {
-			let drv = Derivation::from_path(&path)?;
+			let drv = Derivation::from_path(store, &path)?;
 			let parsed = drv.parsed()?;
 
-			let input_drvs: HashMap<String, Vec<String>> = parsed
+			let input_drvs: HashMap<Utf8PathBuf, Vec<String>> = parsed
 				.inputs
 				.drvs
 				.into_iter()
-				.map(|(k, v)| (to_absolute_store_path(&sd, &k), v.outputs))
+				.map(|(k, v)| (sd.join(&k), v.outputs))
 				.collect();
 
 			for dep_path in input_drvs.keys() {
@@ -131,10 +111,10 @@ impl DrvGraph {
 				}
 			}
 
-			let outputs: HashMap<String, String> = parsed
+			let outputs: HashMap<String, Utf8PathBuf> = parsed
 				.outputs
 				.into_iter()
-				.filter_map(|(name, out)| out.path.map(|p| (name, to_absolute_store_path(&sd, &p))))
+				.filter_map(|(name, out)| out.path.map(|p| (name, sd.join(&p))))
 				.collect();
 
 			nodes.insert(
@@ -151,11 +131,11 @@ impl DrvGraph {
 		Ok(Self { root, nodes })
 	}
 
-	pub fn wanted_outputs(&self, root_outputs: &[String]) -> HashMap<String, Vec<String>> {
-		let mut wanted: HashMap<String, HashSet<String>> = HashMap::new();
+	pub fn wanted_outputs(&self, root_outputs: &[String]) -> HashMap<Utf8PathBuf, Vec<String>> {
+		let mut wanted: HashMap<Utf8PathBuf, HashSet<String>> = HashMap::new();
 		wanted.insert(self.root.clone(), root_outputs.iter().cloned().collect());
 
-		let mut queue: VecDeque<String> = VecDeque::new();
+		let mut queue: VecDeque<Utf8PathBuf> = VecDeque::new();
 		queue.push_back(self.root.clone());
 		while let Some(path) = queue.pop_front() {
 			let Some(node) = self.nodes.get(&path) else {
@@ -186,12 +166,19 @@ impl DrvGraph {
 	}
 }
 
-fn extract_drv_name(drv_path: &str) -> String {
-	drv_path
-		.rsplit('/')
+pub fn extract_drv_name(drv_path: &Utf8Path) -> String {
+	let comp = drv_path
+		.components()
+		.rev()
 		.next()
-		.and_then(|f| f.strip_suffix(".drv"))
-		.and_then(|f| f.split_once('-').map(|(_, name)| name))
-		.unwrap_or(drv_path)
-		.to_owned()
+		.expect("drv path is at least one component");
+	let Utf8Component::Normal(n) = comp else {
+		panic!("drv path is normal");
+	};
+
+	let n = n.strip_suffix(".drv").unwrap_or(n);
+
+	let n = n.split_once(' ').map(|(_, n)| n).unwrap_or(n);
+
+	n.to_owned()
 }

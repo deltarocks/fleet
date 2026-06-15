@@ -1,13 +1,15 @@
 use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
-use bifrostlink::Config;
 use bifrostlink::declarative::endpoints;
+use bifrostlink::Config;
 use camino::Utf8PathBuf;
+use nix_eval::eval_store;
 use remowt_client::Remowt;
 use remowt_endpoints::nix_daemon::NixDaemonClient;
 use serde::{Deserialize, Serialize};
 use tokio::net::UnixListener;
+use tokio::task::spawn_blocking;
 use tracing::error;
 
 pub struct Nix;
@@ -35,9 +37,10 @@ impl Nix {
 		profile: String,
 		store_path: Utf8PathBuf,
 	) -> Result<(), NixError> {
-		tokio::task::spawn_blocking(move || nix_eval::switch_profile(&profile, &store_path))
+		let store = eval_store();
+		spawn_blocking(move || store.switch_profile(&profile, &store_path))
 			.await
-			.map_err(|e| NixError::Profile(e.to_string()))?
+			.expect("switch_profile panicked")
 			.map_err(|e| NixError::Profile(e.to_string()))
 	}
 
@@ -47,11 +50,12 @@ impl Nix {
 		store_path: Utf8PathBuf,
 		key_file: Utf8PathBuf,
 	) -> Result<(), NixError> {
-		tokio::task::spawn_blocking(move || {
-			nix_eval::sign_closure(store_path.as_str(), key_file.as_str())
+		spawn_blocking(move || {
+			let store = eval_store();
+			store.sign_closure(&store_path, &key_file)
 		})
 		.await
-		.map_err(|e| NixError::Sign(e.to_string()))?
+		.expect("store signing panicked")
 		.map_err(|e| NixError::Sign(e.to_string()))
 	}
 
@@ -60,11 +64,11 @@ impl Nix {
 		&self,
 		profile: String,
 	) -> Result<Vec<nix_eval::ProfileGeneration>, NixError> {
-		tokio::task::spawn_blocking(move || {
+		spawn_blocking(move || {
 			nix_eval::list_generations(&format!("/nix/var/nix/profiles/{profile}"))
 		})
 		.await
-		.map_err(|e| NixError::ListGenerations(e.to_string()))?
+		.expect("generation listing panicked")
 		.map_err(|e| NixError::ListGenerations(e.to_string()))
 	}
 }

@@ -2,6 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt::Arguments;
 use std::sync::{LazyLock, Mutex};
 
+use camino::{Utf8Path, Utf8PathBuf};
 use cxx::ExternType;
 use tracing::{
 	Level, Span, debug, debug_span, error, error_span, info, info_span, trace, trace_span, warn,
@@ -10,6 +11,8 @@ use tracing::{
 #[cfg(feature = "indicatif")]
 use tracing_indicatif::span_ext::IndicatifSpanExt as _;
 use vte::Parser;
+
+use crate::drv::extract_drv_name;
 
 #[derive(Debug)]
 enum ActivityType {
@@ -33,20 +36,13 @@ fn strip_prefix_suffix<'s, 'p>(a: &'s str, pref: &'p str, suff: &'p str) -> Opti
 	a.strip_prefix(pref)?.strip_suffix(suff)
 }
 
-fn parse_path(path: &str) -> &str {
-	strip_prefix_suffix(path, "\x1b[35;1m", "\x1b[0m").unwrap_or(path)
+fn parse_path(path: &str) -> Utf8PathBuf {
+	Utf8PathBuf::from(strip_prefix_suffix(path, "\x1b[35;1m", "\x1b[0m").unwrap_or(path))
 }
 
-fn parse_drv(drv: &str) -> &str {
+fn parse_drv(drv: &str) -> String {
 	let drv = parse_path(drv);
-	if let Some(pkg) = drv.strip_prefix("/nix/store/") {
-		let mut it = pkg.splitn(2, '-');
-		it.next();
-		if let Some(pkg) = it.next() {
-			return pkg;
-		}
-	}
-	drv
+	extract_drv_name(&drv)
 }
 fn parse_host(host: &str) -> &str {
 	if host.is_empty() || host == "local" {
@@ -287,19 +283,19 @@ static NIX_SPAN_MAPPING: LazyLock<Mutex<HashMap<u64, Span>>> =
 
 struct DrvGraphEntry {
 	name: String,
-	parent: Option<String>,
+	parent: Option<Utf8PathBuf>,
 	span: Option<Span>,
 	refcount: usize,
 }
 
-static DRV_GRAPH: LazyLock<Mutex<HashMap<String, DrvGraphEntry>>> =
+static DRV_GRAPH: LazyLock<Mutex<HashMap<Utf8PathBuf, DrvGraphEntry>>> =
 	LazyLock::new(|| Mutex::new(HashMap::new()));
 
-static ACTIVITY_TO_DRV: LazyLock<Mutex<HashMap<u64, String>>> =
+static ACTIVITY_TO_DRV: LazyLock<Mutex<HashMap<u64, Utf8PathBuf>>> =
 	LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub struct BuildGraphGuard {
-	paths: Vec<String>,
+	paths: Vec<Utf8PathBuf>,
 }
 
 impl Drop for BuildGraphGuard {
@@ -369,7 +365,7 @@ pub fn register_build_graph(parent: &Span, graph: &crate::drv::DrvGraph) -> Buil
 	BuildGraphGuard { paths }
 }
 
-fn ensure_drv_span(drv_path: &str) -> Option<Span> {
+fn ensure_drv_span(drv_path: &Utf8Path) -> Option<Span> {
 	let mut drv_graph = DRV_GRAPH.lock().expect("not poisoned");
 
 	if let Some(span) = drv_graph.get(drv_path).and_then(|e| e.span.clone()) {
@@ -442,7 +438,7 @@ impl StartActivityBuilder {
 			self.fields.first().and_then(|f| match f {
 				FieldValue::Str(drv_path) => {
 					let clean = parse_path(drv_path);
-					let span = ensure_drv_span(clean);
+					let span = ensure_drv_span(&clean);
 					if span.is_some() {
 						ACTIVITY_TO_DRV
 							.lock()

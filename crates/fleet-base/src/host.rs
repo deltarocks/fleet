@@ -13,7 +13,7 @@ use anyhow::{Context, Result, anyhow, bail, ensure};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use fleet_shared::SecretData;
-use nix_eval::{Store, Value, nix_go, nix_go_json, util::assert_warn};
+use nix_eval::{Store, Value, eval_store, nix_go, nix_go_json, util::assert_warn};
 use remowt_client::{AgentBundle, Remowt};
 use remowt_endpoints::fs::FsClient;
 use remowt_link_shared::Address;
@@ -427,8 +427,10 @@ impl ConfigHost {
 		let store = self.nix_store().await?;
 		{
 			let path = path.clone();
-			spawn_blocking(move || nix_eval::copy_closure_to(&store, path.as_ref()))
-				.await?
+			let store = eval_store();
+			spawn_blocking(move || store.copy_to(&store, path.as_ref()))
+				.await
+				.expect("copy_to panicked")
 				.context("copying closure to remote store")?;
 		}
 		Ok(path)

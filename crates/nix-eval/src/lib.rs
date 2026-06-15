@@ -25,7 +25,7 @@ use self::nix_raw::{
 	PrimOpFun, Store as c_store, StorePath as c_store_path, alloc_primop, alloc_value,
 	bindings_builder_free, bindings_builder_insert, c_context, c_context_create, c_context_free,
 	clear_err, copy_value, err_NIX_ERR_KEY, err_NIX_ERR_NIX_ERROR, err_NIX_ERR_OVERFLOW,
-	err_NIX_ERR_UNKNOWN, err_code, err_info_msg, err_msg, eval_state_build,
+	err_NIX_ERR_UNKNOWN, err_NIX_OK, err_code, err_info_msg, err_msg, eval_state_build,
 	eval_state_builder_load, eval_state_builder_new, eval_state_builder_set_eval_setting,
 	expr_eval_from_string, fetchers_settings, fetchers_settings_free, fetchers_settings_new,
 	flake_lock, flake_lock_flags, flake_lock_flags_free, flake_lock_flags_new, flake_reference,
@@ -320,15 +320,16 @@ impl Drop for NixContext {
 struct GlobalState {
 	// Store should be valid as long as EvalState is valid
 	#[allow(dead_code)]
-	store: Store,
+	store: Arc<Store>,
 	state: EvalState,
 }
 impl GlobalState {
 	fn new() -> Result<Self> {
 		let mut ctx = NixContext::new();
-		let store = ctx
-			.run_in_context(|c| unsafe { store_open(c, c"auto".as_ptr(), null_mut()) })
-			.map(Store)?;
+		let store = Arc::new(
+			ctx.run_in_context(|c| unsafe { store_open(c, c"auto".as_ptr(), null_mut()) })
+				.map(Store)?,
+		);
 
 		let builder = ctx.run_in_context(|c| unsafe { eval_state_builder_new(c, store.0) })?;
 		ctx.run_in_context(|c| unsafe { eval_state_builder_load(c, builder) })?;
@@ -385,66 +386,8 @@ pub(crate) fn with_default_context<T>(
 	v
 }
 
-/// Same as with_default_context, but also passes store...
-/// Yep, this code is garbage and needs to be refactored.
-pub(crate) fn with_store_context<T>(
-	f: impl FnOnce(*mut c_context, *mut c_store, *mut c_eval_state) -> T,
-) -> Result<T> {
-	let global = &GLOBAL_STATE;
-	let (ctx, store, state) =
-		THREAD_STATE.with_borrow_mut(|w| (w.ctx.0, global.store.0, global.state.0));
-	let mut ctx = NixContext(ctx);
-	let v = ctx.run_in_context(|c| f(c, store, state));
-	std::mem::forget(ctx);
-	v
-}
-
 pub fn set_setting(s: &CStr, v: &CStr) -> Result<()> {
 	with_default_context(|c, _| unsafe { setting_set(c, s.as_ptr(), v.as_ptr()) }).map(|_| ())
-}
-
-#[instrument(skip(dst))]
-pub fn copy_closure_to(dst: &Store, path: &Utf8Path) -> Result<()> {
-	let path_c = CString::new(path.as_str())?;
-	with_store_context(|c, src_store, _state| -> Result<()> {
-		let sp = unsafe { store_parse_path(c, src_store, path_c.as_ptr()) };
-		if sp.is_null() {
-			bail!("failed to parse store path {path}");
-		}
-		let rc = unsafe { store_copy_closure(c, src_store, dst.0, sp) };
-		unsafe { store_path_free(sp) };
-		if rc != nix_raw::err_NIX_OK {
-			bail!("store_copy_closure failed (code {rc})");
-		}
-		Ok(())
-	})?
-}
-
-#[instrument]
-pub fn switch_profile(profile: &str, store_path: &Utf8Path) -> Result<()> {
-	let msg = with_store_context(|_c, store, _state| unsafe {
-		nix_cxx::switch_profile(store.cast(), profile, store_path.as_str())
-	})?
-	.to_string();
-	if msg.is_empty() {
-		Ok(())
-	} else {
-		bail!("failed to switch profile {profile}: {msg}");
-	}
-}
-
-// TODO: fleet operator-managed key file
-#[instrument]
-pub fn sign_closure(store_path: &str, key_file: &str) -> Result<()> {
-	let msg = with_store_context(|_c, store, _state| unsafe {
-		nix_cxx::sign_closure(store.cast(), store_path, key_file)
-	})?
-	.to_string();
-	if msg.is_empty() {
-		Ok(())
-	} else {
-		bail!("failed to sign {store_path}: {msg}");
-	}
 }
 
 #[derive(Debug)]
@@ -480,46 +423,6 @@ pub fn list_generations(profile_path: &str) -> Result<Vec<ProfileGeneration>> {
 			current: g.current,
 		})
 		.collect())
-}
-
-#[instrument]
-pub fn add_file_to_store(name: &str, path: &Utf8Path) -> Result<AddedFile> {
-	let res = with_store_context(|_c, store, _state| unsafe {
-		nix_cxx::add_file_to_store(store.cast(), name, path.as_str())
-	})?;
-	if !res.error.is_empty() {
-		bail!("failed to add {path} to store: {}", res.error);
-	}
-	Ok(AddedFile {
-		store_path: Utf8PathBuf::from(res.store_path),
-		hash: res.hash,
-	})
-}
-
-pub fn build_drv_outputs(drv_path: &str, output_names: &[String]) -> Result<Vec<String>> {
-	let joined = output_names.join("\n");
-	let res = with_store_context(|_c, store, _state| unsafe {
-		nix_cxx::build_drv_outputs(store.cast(), drv_path, &joined)
-	})?;
-	if !res.error.is_empty() {
-		bail!("build of {drv_path} failed: {}", res.error);
-	}
-	Ok(res.outputs)
-}
-
-pub fn substitute_paths(paths: &[String]) -> Result<Vec<String>> {
-	let joined = paths.join("\n");
-	let res = with_store_context(|_c, store, _state| unsafe {
-		nix_cxx::substitute_paths(store.cast(), &joined)
-	})?;
-	if !res.error.is_empty() {
-		warn!("substitute_paths reported: {}", res.error);
-	}
-	Ok(res.outputs)
-}
-
-pub fn is_valid_path(path: &str) -> Result<bool> {
-	with_store_context(|_c, store, _state| unsafe { nix_cxx::is_valid_path(store.cast(), path) })
 }
 
 pub struct FetchSettings(*mut fetchers_settings);
@@ -624,6 +527,10 @@ pub struct Store(*mut c_store);
 unsafe impl Send for Store {}
 unsafe impl Sync for Store {}
 
+pub fn eval_store() -> Arc<Store> {
+	GLOBAL_STATE.store.clone()
+}
+
 impl Store {
 	pub fn open(uri: &str) -> Result<Self> {
 		let uri = CString::new(uri)?;
@@ -634,10 +541,107 @@ impl Store {
 		Ok(Store(ptr))
 	}
 
-	fn parse_path(&self, path: &CStr) -> Result<StorePath> {
+	pub fn parse_path(&self, path: &Utf8Path) -> Result<StorePath> {
+		let path = CString::new(path.as_str()).expect("valid cstr");
 		with_default_context(|c, _| {
 			StorePath(unsafe { store_parse_path(c, self.0, path.as_ptr()) })
 		})
+	}
+
+	#[instrument(skip(self))]
+	pub fn sign_closure(&self, path: &Utf8Path, key_file: &Utf8Path) -> Result<()> {
+		let err = with_default_context(|_, _| unsafe {
+			nix_cxx::sign_closure(self.as_ptr().cast(), path.as_str(), key_file.as_str())
+		})?
+		.to_string();
+
+		if err.is_empty() {
+			Ok(())
+		} else {
+			bail!("failed to sign {path}: {err}");
+		}
+	}
+
+	#[instrument(skip(self, dst))]
+	pub fn copy_to(&self, dst: &Store, path: &Utf8Path) -> Result<()> {
+		let sp = self
+			.parse_path(&path)
+			.context("failed to parse store path")?;
+		let rc = with_default_context(|c, _| unsafe {
+			store_copy_closure(c, self.as_ptr(), dst.0, sp.as_ptr())
+		})?;
+		if rc != err_NIX_OK {
+			bail!("store_copy_closure failed (code {rc})");
+		}
+		Ok(())
+	}
+
+	/// Would only work with local store.
+	#[instrument(skip(self))]
+	pub fn switch_profile(&self, profile: &str, path: &Utf8Path) -> Result<()> {
+		let msg = unsafe { nix_cxx::switch_profile(self.as_ptr().cast(), profile, path.as_str()) };
+		if msg.is_empty() {
+			Ok(())
+		} else {
+			bail!("failed to switch profile {profile}: {msg}");
+		}
+	}
+
+	#[instrument(skip(self))]
+	pub fn add_file(&self, name: &str, path: &Utf8Path) -> Result<AddedFile> {
+		let msg = unsafe { nix_cxx::add_file_to_store(self.as_ptr().cast(), name, path.as_str()) };
+		if !msg.error.is_empty() {
+			bail!("failed to add {path} to store: {}", msg.error)
+		}
+		Ok(AddedFile {
+			store_path: Utf8PathBuf::from(msg.store_path),
+			hash: msg.hash,
+		})
+	}
+
+	#[instrument(skip(self))]
+	pub fn substitute_paths(&self, paths: &[Utf8PathBuf]) -> Result<Vec<Utf8PathBuf>> {
+		let joined = paths.into_iter().join("\n");
+		let res = unsafe { nix_cxx::substitute_paths(self.as_ptr().cast(), &joined) };
+		if !res.error.is_empty() {
+			warn!("substitute_paths reported: {}", res.error);
+		}
+		Ok(res.outputs.into_iter().map(Utf8PathBuf::from).collect())
+	}
+
+	#[instrument(skip(self))]
+	pub fn is_valid_path(&self, path: &Utf8Path) -> bool {
+		unsafe { nix_cxx::is_valid_path(self.as_ptr().cast(), path.as_str()) }
+	}
+
+	#[instrument(skip(self))]
+	pub fn build_drv_outputs(
+		&self,
+		drv_path: &Utf8Path,
+		output_names: &[String],
+	) -> Result<Vec<String>> {
+		let joined = output_names.join("\n");
+		let res =
+			unsafe { nix_cxx::build_drv_outputs(self.as_ptr().cast(), drv_path.as_str(), &joined) };
+		if !res.error.is_empty() {
+			bail!("build of {drv_path} failed: {}", res.error);
+		}
+		Ok(res.outputs)
+	}
+
+	#[instrument(skip(self))]
+	pub fn store_dir(&self) -> Result<Utf8PathBuf> {
+		let mut out = String::new();
+		with_default_context(|c, es| unsafe {
+			nix_raw::store_get_storedir(c, self.as_ptr(), Some(copy_nix_str), (&raw mut out).cast())
+		})?;
+		let p = Utf8PathBuf::from(out);
+		assert!(p.is_absolute());
+		Ok(p)
+	}
+
+	fn as_ptr(&self) -> *mut c_store {
+		self.0
 	}
 }
 impl Drop for Store {
@@ -1060,11 +1064,12 @@ impl Value {
 			self.clone()
 		};
 
-		let drv_path = v
-			.get_field("drvPath")
-			.context("getting drvPath")?
-			.to_string()?;
-		let graph = Arc::new(drv::DrvGraph::resolve(&drv_path)?);
+		let drv_path = Utf8PathBuf::from(
+			v.get_field("drvPath")
+				.context("getting drvPath")?
+				.to_string()?,
+		);
+		let graph = Arc::new(drv::DrvGraph::resolve(&eval_store(), &drv_path)?);
 		let _guard = logging::register_build_graph(&Span::current(), &graph);
 
 		scheduler::build_graph_sync(graph.clone(), vec![output.to_owned()])?;
@@ -1255,8 +1260,12 @@ impl NativeFn {
 	}
 }
 
-struct StorePath(*mut c_store_path);
-impl StorePath {}
+pub struct StorePath(*mut c_store_path);
+impl StorePath {
+	fn as_ptr(&self) -> *mut c_store_path {
+		self.0
+	}
+}
 
 impl Drop for StorePath {
 	fn drop(&mut self) {
