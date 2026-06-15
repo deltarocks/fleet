@@ -599,7 +599,7 @@ impl Store {
 		})
 	}
 
-	#[instrument(skip(self))]
+	#[instrument(skip(self, paths))]
 	pub fn substitute_paths(&self, paths: &[Utf8PathBuf]) -> Result<Vec<Utf8PathBuf>> {
 		let joined = paths.into_iter().join("\n");
 		let res = unsafe { nix_cxx::substitute_paths(self.as_ptr().cast(), &joined) };
