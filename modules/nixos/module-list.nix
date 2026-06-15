@@ -4,5 +4,6 @@
   ./rollback.nix
   ./nix-sign.nix
   ./online.nix
+  ./polkit.nix
   ./top-level.nix
 ]

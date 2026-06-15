@@ -188,9 +188,9 @@
         ]
       },
       "locked": {
-        "lastModified": 1781471358,
-        "rev": "c69dddc33f8e2081ef685ae20a7278f92cfcd32e",
-        "revCount": 37,
+        "lastModified": 1781491431,
+        "rev": "c8dca760c1f13e8b65677bac7b21abb487d745c0",
+        "revCount": 40,
         "type": "git",
         "url": "file:/home/lach/build/remowt-agents"
       },

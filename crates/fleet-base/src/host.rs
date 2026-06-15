@@ -250,7 +250,7 @@ impl ConfigHost {
 		}
 		let bundle = agent_bundle()?;
 		let conn = if self.local {
-			Remowt::connect_local(&bundle)
+			Remowt::connect_local(&bundle, "remowt-fleet".to_owned())
 				.await
 				.context("starting local remowt agent")?
 		} else {
@@ -259,7 +259,7 @@ impl ConfigHost {
 				.get()
 				.cloned()
 				.unwrap_or_else(|| self.name.clone());
-			Remowt::connect(&dest, &bundle)
+			Remowt::connect(&dest, &bundle, "remowt-fleet".to_owned())
 				.await
 				.map_err(|e| anyhow!("remowt error while connecting to {}: {e:#?}", self.name))?
 		};

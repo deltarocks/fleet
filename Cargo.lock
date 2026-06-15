@@ -451,9 +451,9 @@ checksum = "d86b93f97252c47b41663388e6d155714a9d0c398b99f1005cbc5f978b29f445"
 
 [[package]]
 name = "bifrostlink"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2fb01af731c11dd31b23783a83a36a29f644cc1972481f6fa4f4fabc709079eb"
+checksum = "0c8ce9dc1425ee2aaffd3324548f114acccd456b9b1ffb33fe9eb9a7be6475a8"
 dependencies = [
  "async-trait",
  "async_fn_traits",
@@ -465,14 +465,13 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
- "uuid",
 ]
 
 [[package]]
 name = "bifrostlink-macros"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c4b7a5fb38b36bd81910c17ebf369f9296e508d92b1277a768a63c8a2254fdb"
+checksum = "a7d071add2d3b90486fe141edb2e811f7735155d320aee3936ebd67e535d6ac1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -481,9 +480,9 @@ dependencies = [
 
 [[package]]
 name = "bifrostlink-ports"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "977acfcb8ed3c24ab7c2f76fb3eeebff1533c72708733ce6020f2501980b7cf2"
+checksum = "ccf6ba32d0ff83b27a242f9d2fca124ad215ddd9bf99144d66b7ca44a885de50"
 dependencies = [
  "bifrostlink",
  "bytes",
@@ -3654,13 +3653,12 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "remowt-client"
-version = "0.1.7"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34d59c0ce311b4b3c094b0b196a1004aa438b9947c3eace2ca4d2a0ac08fac59"
+checksum = "af0ab07d961f14fa5c4933899a5253341e2044dec71db6e341f80b16beff2c20"
 dependencies = [
  "anyhow",
  "bifrostlink",
- "bifrostlink-ports",
  "bytes",
  "camino",
  "futures",
@@ -3679,13 +3677,11 @@ dependencies = [
 
 [[package]]
 name = "remowt-endpoints"
-version = "0.1.7"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb203856cd5cff27504bd2023c59195b1f1ce1cf5d8ea836598993894eb1b9c0"
+checksum = "9a841eec11d4cc0593188062634f7ee34e87a2052a70c0fa40fbecb4aa8692c0"
 dependencies = [
- "anyhow",
  "bifrostlink",
- "bifrostlink-macros",
  "camino",
  "nix",
  "serde",
@@ -3693,7 +3689,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "uuid",
  "zbus",
 ]
 
@@ -3716,9 +3711,9 @@ dependencies = [
 
 [[package]]
 name = "remowt-link-shared"
-version = "0.1.7"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "98ebba5be028a2dfb7f1858bb0ff74037262753eaae4dc6e5d9ae241c4567668"
+checksum = "d5036c5e2d5f47bb7ecb25542268f865c298c2b747d74269ff6b2b387574071a"
 dependencies = [
  "bifrostlink",
  "bytes",
@@ -3732,9 +3727,9 @@ dependencies = [
 
 [[package]]
 name = "remowt-plugin"
-version = "0.1.7"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef73ef3eea5bb6152d01019b5062e51ef258a1ac1c7a6f8cdcdf6fe1eb192cdd"
+checksum = "5ca599e67dc675d8dd59abfe8f08679f7f3c6fd7aa84507ab426839985a142ab"
 dependencies = [
  "anyhow",
  "bifrostlink",
@@ -3742,7 +3737,6 @@ dependencies = [
  "remowt-link-shared",
  "serde_json",
  "tokio",
- "tracing",
  "tracing-subscriber",
 ]
 
@@ -3757,15 +3751,14 @@ dependencies = [
 
 [[package]]
 name = "remowt-ui-prompt"
-version = "0.1.7"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "acf28ba68e6f8087657157695e9ab42b82a21130e77f6dffd27781062109325d"
+checksum = "2610933566f9b057dc47145b7bfc5876c4139eb766fc2fe9f2ce60baf1856c8c"
 dependencies = [
  "anyhow",
  "bifrostlink",
  "bifrostlink-macros",
  "serde",
- "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "tracing",

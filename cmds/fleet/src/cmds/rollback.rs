@@ -62,7 +62,6 @@ pub async fn list_all_generations(host: &ConfigHost, config: &Config) -> Vec<Gen
 			warn!("failed to list generations available locally: {e}");
 		})
 		.unwrap_or_default();
-	dbg!(&stored_locally);
 	stored_locally.retain(|g| !on_machine_store_paths.contains(&g.store_path));
 	for ele in stored_locally.iter_mut() {
 		ele.current = false;

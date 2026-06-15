@@ -104,6 +104,12 @@ impl DrvGraph {
 				.into_iter()
 				.map(|(k, v)| (sd.join(&k), v.outputs))
 				.collect();
+			let input_srcs: Vec<Utf8PathBuf> = parsed
+				.inputs
+				.srcs
+				.into_iter()
+				.map(|k| sd.join(&k))
+				.collect();
 
 			for dep_path in input_drvs.keys() {
 				if visited.insert(dep_path.clone()) {
@@ -122,7 +128,7 @@ impl DrvGraph {
 				DrvNode {
 					name: extract_drv_name(&path),
 					input_drvs,
-					input_srcs: parsed.inputs.srcs,
+					input_srcs,
 					outputs,
 				},
 			);
