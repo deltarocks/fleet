@@ -2,7 +2,7 @@
   description = "NixOS cluster configuration management";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/release-25.11";
+    nixpkgs.url = "github:nixos/nixpkgs/release-26.05";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -118,7 +118,9 @@
             ];
             deployerSystem = elem system deployerSystems;
             lib = pkgs.lib;
-            rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+            rust = (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml).override {
+              enableLibsecret = false;
+            };
             craneLib = (inputs.crane.mkLib pkgs).overrideToolchain rust;
             treefmt = (inputs.treefmt-nix.lib.evalModule pkgs ./treefmt.nix).config.build;
           in
@@ -126,21 +128,7 @@
             _module.args.pkgs = import inputs.nixpkgs {
               inherit system;
               overlays = [
-                (inputs.rust-overlay.overlays.default)
-                (final: prev: {
-                  # Libsecret is stupidly huge
-                  # https://github.com/oxalica/rust-overlay/issues/211
-                  libsecret = final.stdenv.mkDerivation {
-                    name = "fake-libsecret";
-                    version = "1.0.0";
-                    unpackPhase = "true";
-                    buildPhase = "true";
-                    installPhase = ''
-                      mkdir -p $out/lib/
-                      echo "" | gcc -shared -o $out/lib/libsecret-1.so.0 -x c -
-                    '';
-                  };
-                })
+                inputs.rust-overlay.overlays.default
               ];
             };
             # Reference fleet package should be built with nightly rust, specified in rust-toolchain.toml.

@@ -2,10 +2,10 @@
   "nodes": {
     "crane": {
       "locked": {
-        "lastModified": 1780532242,
+        "lastModified": 1781825982,
         "owner": "ipetkov",
         "repo": "crane",
-        "rev": "59a82a1222dd3b2080b5cc52a1a2e8d5f1b77f37",
+        "rev": "469fd08d0bcf6926321fa973c6777fbc87785dd7",
         "type": "github"
       },
       "original": {
@@ -126,15 +126,15 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1781402740,
+        "lastModified": 1781820577,
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "49145c5aba740948d6da1265f584826bd27619ad",
+        "rev": "adf9aaad17ce9361ef72b69a9bf53026b334b5fc",
         "type": "github"
       },
       "original": {
         "owner": "nixos",
-        "ref": "release-25.11",
+        "ref": "release-26.05",
         "repo": "nixpkgs",
         "type": "github"
       }
@@ -190,10 +190,10 @@
         ]
       },
       "locked": {
-        "lastModified": 1781320681,
+        "lastModified": 1781752752,
         "owner": "oxalica",
         "repo": "rust-overlay",
-        "rev": "5b929d8c854149d926d05ea0cd6469bf4e54db27",
+        "rev": "c06d86dabe5b92982b9d67acccb9990d58da3a0e",
         "type": "github"
       },
       "original": {
