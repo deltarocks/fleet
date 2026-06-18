@@ -5,7 +5,6 @@ use std::result;
 
 pub mod auto;
 pub mod bifrost;
-pub mod dbus;
 pub mod rofi;
 
 #[derive(thiserror::Error, Debug, serde::Serialize, serde::Deserialize)]
@@ -20,7 +19,6 @@ pub enum Error {
 
 pub type Result<T, E = Error> = result::Result<T, E>;
 
-#[cfg_attr(feature = "dbus", derive(zbus::zvariant::Type))]
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct Source(pub Cow<'static, str>);
 impl fmt::Display for Source {

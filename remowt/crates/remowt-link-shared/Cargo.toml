@@ -9,7 +9,7 @@ license.workspace = true
 anyhow.workspace = true
 bifrostlink.workspace = true
 bytes.workspace = true
-camino = { workspace = true }
+camino = { workspace = true, features = ["serde1"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true

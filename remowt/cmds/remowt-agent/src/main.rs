@@ -18,7 +18,7 @@ use remowt_endpoints::{
 };
 use remowt_link_shared::iroh_tunnel::TunnelDialer;
 use remowt_link_shared::{editor::EditorEndpointsClient, Address, BifConfig};
-use remowt_polkit_shared::{emphasize, BackendRequest, Identity, PidDisplay};
+use remowt_polkit_shared::{emphasize, Identity, PidDisplay};
 use remowt_ui_prompt::bifrost::PromptEndpointsClient;
 use remowt_ui_prompt::rofi::RofiPrompter;
 use remowt_ui_prompt::{PrependSourcePrompter, Prompter, Source};
@@ -29,7 +29,7 @@ use tokio::task::AbortHandle;
 use tracing::{debug, trace};
 use zbus::fdo;
 use zbus::zvariant::{OwnedValue, Str};
-use zbus::{interface, proxy, Connection};
+use zbus::{interface, Connection};
 use zbus_polkit::policykit1::Subject;
 
 use self::helper::{Helper, SocketHelper, SuidHelper};
@@ -199,15 +199,6 @@ where
 }
 
 const OBJ_PATH: &str = "/org/freedesktop/PolicyKit1/AuthenticationAgent";
-
-#[proxy(
-	interface = "lach.PolkitHelper",
-	default_service = "lach.polkit.helper1",
-	default_path = "/lach/PolkitHelper"
-)]
-trait PolkitHelper {
-	fn init_conversation(&self, request: BackendRequest) -> zbus::Result<()>;
-}
 
 #[derive(Parser)]
 enum Opts {

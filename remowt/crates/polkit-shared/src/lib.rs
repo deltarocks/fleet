@@ -103,11 +103,3 @@ impl Clone for Identity {
 		}
 	}
 }
-
-#[derive(Serialize, Deserialize, Type, PartialEq, Debug)]
-pub struct BackendRequest {
-	pub cookie: String,
-	pub environment: HashMap<String, String>,
-	pub prompter_path: String,
-	pub identity: Identity,
-}

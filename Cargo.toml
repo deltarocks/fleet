@@ -89,7 +89,6 @@ x25519-dalek = { version = "2.0.1", features = ["getrandom"] }
 zbus = "5.16.0"
 zbus_polkit = "5.0.0"
 tokio-util = "0.7.11"
-pam-client = "0.5.0"
 
 [profile.dev]
 panic = "abort"

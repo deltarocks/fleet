@@ -1,8 +1,0 @@
-== What is it?
-
-Usually, there is a `polkit-agent-helper-1` suid binary installed on the system with polkit package.
-
-This, however, an alternative to that approach, a system daemon listening for dbus requests, which works
-without using suid binaries.
-
-In future it will provide some additional features.
