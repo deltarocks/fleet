@@ -1,4 +1,4 @@
-use remowt_fleet::{Nix, init_libraries};
+use remowt_fleet::{init_libraries, Nix};
 
 fn main() -> anyhow::Result<()> {
 	remowt_plugin::run(|rpc| {

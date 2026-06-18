@@ -1,0 +1,35 @@
+[package]
+name = "remowt-agent"
+description = "remowt on-host agent serving fs/pty/systemd endpoints over bifrostlink"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+bifrostlink.workspace = true
+bifrostlink-ports.workspace = true
+clap = { workspace = true, features = ["derive"] }
+futures.workspace = true
+nix.workspace = true
+remowt-polkit-shared.workspace = true
+remowt-link-shared.workspace = true
+remowt-plugin.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = [
+	"rt",
+	"fs",
+	"macros",
+	"net",
+	"io-util",
+	"time",
+	"process",
+] }
+tokio-util = { workspace = true, features = ["codec"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+remowt-ui-prompt.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+zbus = { workspace = true, features = ["tokio"] }
+zbus_polkit = { workspace = true, features = ["tokio"] }
+remowt-endpoints.workspace = true

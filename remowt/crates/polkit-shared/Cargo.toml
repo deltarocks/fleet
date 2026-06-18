@@ -1,0 +1,11 @@
+[package]
+name = "remowt-polkit-shared"
+description = "Shared polkit/PAM types for remowt"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+
+[dependencies]
+nix = { workspace = true, features = ["user"] }
+serde = { workspace = true, features = ["derive"] }
+zbus.workspace = true

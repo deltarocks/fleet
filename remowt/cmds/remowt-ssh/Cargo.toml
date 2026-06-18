@@ -1,0 +1,24 @@
+[package]
+name = "remowt-ssh"
+description = "SSH transport client for connecting to a remowt agent"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+
+[dependencies]
+clap = { workspace = true, features = ["derive"] }
+tracing-subscriber.workspace = true
+remowt-link-shared.workspace = true
+remowt-client.workspace = true
+tokio = { workspace = true, features = [
+	"macros",
+	"fs",
+	"net",
+	"io-util",
+	"rt",
+	"signal",
+] }
+nix = { workspace = true, features = ["term"] }
+anyhow.workspace = true
+tracing.workspace = true
+remowt-ui-prompt.workspace = true

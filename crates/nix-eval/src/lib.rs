@@ -565,7 +565,7 @@ impl Store {
 	#[instrument(skip(self, dst))]
 	pub fn copy_to(&self, dst: &Store, path: &Utf8Path) -> Result<()> {
 		let sp = self
-			.parse_path(&path)
+			.parse_path(path)
 			.context("failed to parse store path")?;
 		let rc = with_default_context(|c, _| unsafe {
 			store_copy_closure(c, self.as_ptr(), dst.0, sp.as_ptr())

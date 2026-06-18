@@ -1,0 +1,19 @@
+[package]
+name = "polkit-backend"
+description = "polkit/PAM D-Bus authentication backend for remowt"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap = { workspace = true, features = ["derive"] }
+nix.workspace = true
+pam-client.workspace = true
+remowt-polkit-shared.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+remowt-ui-prompt.workspace = true
+zbus = { workspace = true, features = ["tokio"] }
+zbus_polkit = { workspace = true, features = ["tokio"] }

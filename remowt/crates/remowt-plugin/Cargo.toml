@@ -1,0 +1,23 @@
+[package]
+name = "remowt-plugin"
+description = "Plugin host and protocol for remowt agents"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+bifrostlink.workspace = true
+bifrostlink-ports.workspace = true
+remowt-link-shared.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = [
+	"rt",
+	"net",
+	"io-std",
+	"io-util",
+	"macros",
+	"time",
+	"process",
+] }
+tracing-subscriber.workspace = true

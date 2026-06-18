@@ -1,0 +1,32 @@
+[package]
+name = "remowt-client"
+description = "russh-based client connection to a remowt agent"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+bifrostlink.workspace = true
+bytes.workspace = true
+camino.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+remowt-link-shared.workspace = true
+russh.workspace = true
+russh-config.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = [
+	"net",
+	"io-util",
+	"rt",
+	"sync",
+	"macros",
+	"process",
+] }
+tracing.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+remowt-endpoints.workspace = true
+tokio-util = { workspace = true, features = ["codec"] }
+futures.workspace = true
+iroh.workspace = true

@@ -425,9 +425,9 @@ impl ConfigHost {
 			warn!("failed to sign store paths: {e}");
 		}
 		let store = self.nix_store().await?;
+		let eval_store = eval_store();
 		{
 			let path = path.clone();
-			let eval_store = eval_store();
 			spawn_blocking(move || eval_store.copy_to(&store, path.as_ref()))
 				.await
 				.expect("copy_to panicked")

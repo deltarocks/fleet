@@ -1,0 +1,20 @@
+[package]
+name = "remowt-ui-prompt"
+description = "Interactive UI prompt endpoint for remowt (D-Bus)"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+bifrostlink.workspace = true
+bifrostlink-macros.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "process", "rt"] }
+tracing.workspace = true
+zbus = { workspace = true, optional = true }
+
+[features]
+default = ["dbus"]
+dbus = ["dep:zbus"]
