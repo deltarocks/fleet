@@ -4,8 +4,9 @@ use anyhow::{Result, bail};
 use clap::Parser;
 use fleet_base::{
 	deploy::{DeployAction, deploy_task, upload_task},
-	host::{Config, ConfigHost, Generation, GenerationStorage},
+	host::{Config, ConfigHost},
 	opts::FleetOpts,
+	pins::{Generation, GenerationStorage},
 };
 use tabled::Table;
 use tracing::{info, warn};
@@ -103,13 +104,8 @@ impl RollbackSingle {
 						Table::new(&generations)
 					);
 				};
-				let remote_path = upload_task(
-					config,
-					&host,
-					generation.location,
-					generation.store_path.clone(),
-				)
-				.await?;
+				let remote_path =
+					upload_task(&host, generation.location, generation.store_path.clone()).await?;
 
 				deploy_task(
 					action,

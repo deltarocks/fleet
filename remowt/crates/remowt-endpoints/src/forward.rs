@@ -3,12 +3,12 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use bifrostlink::declarative::endpoints;
 use bifrostlink::Config;
+use bifrostlink::declarative::endpoints;
 use remowt_link_shared::iroh_tunnel::{TunnelAddr, TunnelDialer};
 use serde::{Deserialize, Serialize};
 use std::result::Result;
-use tokio::net::{TcpStream, UdpSocket};
+use tokio::net::{TcpStream, UdpSocket, UnixStream};
 use tracing::warn;
 
 #[derive(Serialize, Deserialize, Debug, thiserror::Error)]
@@ -106,6 +106,24 @@ impl Forward {
 		});
 
 		Ok(session)
+	}
+
+	#[endpoints(id = 3)]
+	async fn connect_unix(&self, tunnel: TunnelAddr, path: String) -> Result<(), Error> {
+		let stream = self
+			.dialer
+			.connect_tunnel(&tunnel)
+			.await
+			.map_err(|e| Error::Tunnel(e.to_string()))?;
+		let unix = UnixStream::connect(&path)
+			.await
+			.map_err(|e| Error::Connect(path, e.to_string()))?;
+		tokio::spawn(async move {
+			let mut stream = stream;
+			let mut unix = unix;
+			let _ = tokio::io::copy_bidirectional(&mut stream, &mut unix).await;
+		});
+		Ok(())
 	}
 }
 

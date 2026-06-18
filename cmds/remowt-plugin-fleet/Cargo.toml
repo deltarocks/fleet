@@ -2,7 +2,7 @@
 name = "remowt-plugin-fleet"
 description = "Remowt plugin exposing fleet's Nix endpoint to a running agent"
 version.workspace = true
-edition = "2021"
+edition.workspace = true
 
 [dependencies]
 remowt-fleet.workspace = true

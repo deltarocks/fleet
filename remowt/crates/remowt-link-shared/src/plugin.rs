@@ -10,6 +10,8 @@ pub enum Error {
 	BadName,
 	#[error("spawning plugin failed: {0}")]
 	Spawn(String),
+	#[error("failed to wait for connection, plugin process has died?")]
+	ConnectionWaitError,
 	#[error("agent is shutting down")]
 	Gone,
 }

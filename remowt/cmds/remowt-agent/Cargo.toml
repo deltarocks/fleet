@@ -2,7 +2,7 @@
 name = "remowt-agent"
 description = "remowt on-host agent serving fs/pty/systemd endpoints over bifrostlink"
 version.workspace = true
-edition = "2021"
+edition.workspace = true
 license.workspace = true
 
 [dependencies]

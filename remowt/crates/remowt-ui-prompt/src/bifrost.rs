@@ -103,7 +103,6 @@ pub fn serve_prompts<P, C>(rpc: &mut Rpc<C>, prompt: P)
 where
 	P: Prompter + Send + Sync + 'static,
 	C: Config,
-	C::Error: From<Error>,
 {
 	PromptEndpoints(prompt).register_endpoints(rpc);
 }

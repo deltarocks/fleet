@@ -8,6 +8,7 @@ use tokio::process::{Child, Command};
 use remowt_link_shared::plugin::{Error, PluginEndpoints, PluginHost};
 use remowt_link_shared::port::child_port;
 use remowt_link_shared::{Address, BifConfig};
+use tokio::select;
 
 pub fn serve(rpc: &mut Rpc<BifConfig>) {
 	let host = Host {
@@ -25,7 +26,7 @@ struct Host {
 }
 
 impl Host {
-	fn spawn(&self, id: u16, path: impl AsRef<OsStr>) -> Result<(), Error> {
+	async fn spawn(&self, id: u16, path: impl AsRef<OsStr>) -> Result<(), Error> {
 		let rpc = self.rpc.clone().upgrade().ok_or(Error::Gone)?;
 
 		let mut child = Command::new(path)
@@ -40,8 +41,20 @@ impl Host {
 		let stdout = child.stdout.take().expect("stdout piped");
 
 		let addr = Address::Plugin(id);
-		rpc.add_direct(addr, child_port(stdout, stdin), Rtt(0));
+		rpc.add_direct(addr.clone(), child_port(stdout, stdin), Rtt(0));
+
+		select! {
+			e = rpc.wait_for_connection_to(addr) => {
+				if e.is_err() {
+					return Err(Error::ConnectionWaitError)
+				}
+			},
+			_ = child.wait() => {
+				return Err(Error::ConnectionWaitError)
+			}
+		};
 		self.children.lock().expect("not poisoned").push(child);
+
 		Ok(())
 	}
 }
@@ -58,13 +71,13 @@ impl PluginHost for Host {
 		let dir = exe
 			.parent()
 			.ok_or_else(|| Error::Spawn("primary agent has no parent directory".to_owned()))?;
-		self.spawn(id, dir.join(&name))
+		self.spawn(id, dir.join(&name)).await
 	}
 
 	async fn load_plugin_path(&self, id: u16, path: String) -> Result<(), Error> {
 		if path.is_empty() || path.contains('\0') {
 			return Err(Error::BadName);
 		}
-		self.spawn(id, path)
+		self.spawn(id, path).await
 	}
 }

@@ -2,7 +2,7 @@
 name = "remowt-fleet"
 description = "Remowt endpoints for fleet"
 version.workspace = true
-edition = "2021"
+edition.workspace = true
 
 [dependencies]
 bifrostlink.workspace = true
@@ -18,3 +18,4 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["io-util", "net", "process", "rt"] }
 tracing.workspace = true
 uuid.workspace = true
+remowt-link-shared.workspace = true

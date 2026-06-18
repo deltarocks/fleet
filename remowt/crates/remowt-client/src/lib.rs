@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 
-use anyhow::{anyhow, bail, ensure, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow, bail, ensure};
 use bifrostlink::declarative::RemoteEndpoints;
 use bifrostlink::{Remote, Rpc, Rtt};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -12,12 +12,12 @@ use remowt_link_shared::iroh_tunnel::{DatagramRouter, IrohBiStream, TunnelAddr};
 use remowt_link_shared::plugin::PluginEndpointsClient;
 use remowt_link_shared::port::child_port;
 use remowt_link_shared::{Address, BifConfig};
-use russh::client::{connect, Config, Handle, Handler, Msg, Session};
-use russh::keys::agent::client::AgentClient;
+use russh::Channel;
+use russh::client::{Config, Handle, Handler, Msg, Session, connect};
 use russh::keys::agent::AgentIdentity;
+use russh::keys::agent::client::AgentClient;
 use russh::keys::check_known_hosts;
 use russh::keys::ssh_key::PublicKey;
-use russh::Channel;
 use tempfile::TempDir;
 use tokio::io::AsyncRead;
 use tokio::net::UnixListener;
@@ -287,8 +287,12 @@ impl Remowt {
 			.unwrap_or_else(|| env::var("USER").unwrap_or_else(|_| "root".to_owned()));
 
 		let subs: Subs = Arc::new(Mutex::new(HashMap::new()));
+		let config = Config {
+			nodelay: true,
+			..Config::default()
+		};
 		let mut sess = connect(
-			Arc::new(Config::default()),
+			Arc::new(config),
 			(hostname.clone(), port),
 			SshHandler {
 				host: hostname,
@@ -549,9 +553,7 @@ impl Remowt {
 		}
 	}
 
-	/// Bind a data tunnel, preferring the iroh fast path when it is up. Escalated tunnels
-	/// (the privileged agent, a separate process with no iroh connection of its own) and the
-	/// local transport always use the ssh/unix path.
+	/// Bind a data tunnel, preferring the iroh fast path when it is up.
 	pub async fn bind_fast_tunnel(
 		&self,
 		hint: &str,
@@ -586,7 +588,7 @@ impl Remowt {
 
 	async fn try_setup_iroh(&self) -> Result<()> {
 		use remowt_endpoints::iroh_tunnel::IrohTunnelClient;
-		use remowt_link_shared::iroh_tunnel::{build_endpoint, ssh_custom_addr, REMOWT_ALPN};
+		use remowt_link_shared::iroh_tunnel::{REMOWT_ALPN, build_endpoint, ssh_custom_addr};
 
 		let (listener, sock) = self.bind_runtime_unix("iroh-xport").await?;
 		let secret = iroh::SecretKey::generate();
@@ -605,7 +607,7 @@ impl Remowt {
 		);
 		let conn = ep.connect(addr, REMOWT_ALPN).await?;
 		ensure!(conn.remote_id() == agent_id, "iroh peer identity mismatch");
-		info!("iroh fast tunnel established");
+		debug!("iroh fast tunnel established");
 
 		let subs = self.0.iroh.subs.clone();
 		let accept_conn = conn.clone();
@@ -633,16 +635,6 @@ impl Remowt {
 						debug!("iroh accept loop ended: {e}");
 						break;
 					}
-				}
-			}
-		});
-
-		let log_conn = conn.clone();
-		tokio::spawn(async move {
-			tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-			for p in log_conn.paths().iter() {
-				if p.is_selected() {
-					info!(rtt = ?p.rtt(), "iroh selected path: {}", p.remote_addr());
 				}
 			}
 		});
@@ -688,10 +680,10 @@ pub(crate) fn drain_to_tracing(
 }
 
 fn local_runtime_dir() -> Result<(Utf8PathBuf, Option<TempDir>)> {
-	if let Ok(dir) = env::var("XDG_RUNTIME_DIR") {
-		if !dir.is_empty() {
-			return Ok((Utf8PathBuf::from(dir), None));
-		}
+	if let Ok(dir) = env::var("XDG_RUNTIME_DIR")
+		&& !dir.is_empty()
+	{
+		return Ok((Utf8PathBuf::from(dir), None));
 	}
 	let tmp = tempfile::Builder::new()
 		.prefix("remowt.")

@@ -7,6 +7,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 pub mod editor;
+pub mod gateway;
 pub mod iroh_tunnel;
 pub mod port;
 
@@ -16,6 +17,7 @@ pub enum Address {
 	Agent,
 	AgentPrivileged,
 	Plugin(u16),
+	Ephemeral(uuid::Uuid),
 }
 impl AddressT for Address {}
 
@@ -27,9 +29,6 @@ pub enum Error {
 	ListenerDead,
 	#[error("response: {0}")]
 	Response(String),
-
-	#[error(transparent)]
-	Ui(#[from] remowt_ui_prompt::Error),
 }
 
 impl From<ListenerForYourRequestHasBeenDeadError> for Error {
@@ -38,8 +37,8 @@ impl From<ListenerForYourRequestHasBeenDeadError> for Error {
 	}
 }
 impl From<serde_json::Error> for Error {
-	fn from(_value: serde_json::Error) -> Self {
-		Self::ListenerDead
+	fn from(e: serde_json::Error) -> Self {
+		Self::Response(format!("{e}"))
 	}
 }
 impl From<Error> for ResponseError {

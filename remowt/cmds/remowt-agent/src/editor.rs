@@ -3,87 +3,23 @@ use std::path::Path;
 use std::time::Duration;
 use std::{fs, io};
 
-use anyhow::{bail, Context as _};
+use anyhow::{anyhow, bail, Context as _};
+use bifrostlink::declarative::RemoteEndpoints as _;
 use nix::libc;
 use remowt_link_shared::editor::EditorEndpointsClient;
+use remowt_link_shared::{gateway, Address, BifConfig};
 use tokio::process::Command;
-use zbus::{fdo, interface, proxy, Connection};
-
-use remowt_link_shared::BifConfig;
-
-const BUS_NAME: &str = "lach.RemowtEditor";
-const SERVICE_PATH: &str = "/lach/Editor";
-
-pub struct EditorService {
-	editor: EditorEndpointsClient<BifConfig>,
-}
-
-#[interface(name = "lach.RemowtEditor")]
-impl EditorService {
-	/// Attach the User's GUI to the nvim server at `socket_path` (on the remote),
-	/// blocking until the user is done.
-	async fn edit(&self, socket_path: String) -> fdo::Result<()> {
-		self.editor
-			.open_editor(socket_path)
-			.await
-			.map_err(|e| fdo::Error::Failed(format!("requesting editor on the User: {e}")))?
-			.map_err(|e| fdo::Error::Failed(format!("editor failed: {e}")))?;
-		Ok(())
-	}
-
-	async fn forward_tcp(&self, addr: String) -> fdo::Result<u16> {
-		let local = self
-			.editor
-			.expose_tcp(addr)
-			.await
-			.map_err(|e| fdo::Error::Failed(format!("requesting tcp forward on the User: {e}")))?
-			.map_err(|e| fdo::Error::Failed(format!("tcp forward failed: {e}")))?;
-		Ok(local)
-	}
-
-	async fn forward_udp(&self, addr: String) -> fdo::Result<u16> {
-		let local = self
-			.editor
-			.expose_udp(addr)
-			.await
-			.map_err(|e| fdo::Error::Failed(format!("requesting udp forward on the User: {e}")))?
-			.map_err(|e| fdo::Error::Failed(format!("udp forward failed: {e}")))?;
-		Ok(local)
-	}
-}
-
-pub async fn serve(
-	conn: &Connection,
-	editor: EditorEndpointsClient<BifConfig>,
-) -> anyhow::Result<()> {
-	conn.object_server()
-		.at(SERVICE_PATH, EditorService { editor })
-		.await?;
-	conn.request_name(BUS_NAME).await?;
-	Ok(())
-}
-
-#[proxy(interface = "lach.RemowtEditor")]
-trait RemowtEditor {
-	async fn edit(&self, socket_path: &str) -> fdo::Result<()>;
-	async fn forward_tcp(&self, addr: &str) -> fdo::Result<u16>;
-	async fn forward_udp(&self, addr: &str) -> fdo::Result<u16>;
-}
 
 pub async fn forward(udp: bool, addr: String) -> anyhow::Result<()> {
-	let conn = Connection::session()
-		.await
-		.context("connecting to the session bus (DBUS_SESSION_BUS_ADDRESS)")?;
-	let proxy = RemowtEditorProxy::builder(&conn)
-		.destination(BUS_NAME)?
-		.path(SERVICE_PATH)?
-		.build()
-		.await?;
+	let rpc = gateway::connect(&gateway::socket_path()?).await?;
+	let editor = EditorEndpointsClient::<BifConfig>::wrap(rpc.remote(Address::User));
 	let local = if udp {
-		proxy.forward_udp(&addr).await?
+		editor.expose_udp(addr).await
 	} else {
-		proxy.forward_tcp(&addr).await?
-	};
+		editor.expose_tcp(addr).await
+	}
+	.map_err(|e| anyhow!("requesting forward on the User: {e}"))?
+	.map_err(|e| anyhow!("forward failed: {e}"))?;
 	println!("{local}");
 	Ok(())
 }
@@ -125,15 +61,13 @@ pub async fn edit(path: String) -> anyhow::Result<()> {
 		.await
 		.context("nvim did not start its server")?;
 
-	let conn = Connection::session()
+	let rpc = gateway::connect(&gateway::socket_path()?).await?;
+	let editor = EditorEndpointsClient::<BifConfig>::wrap(rpc.remote(Address::User));
+	let result = editor
+		.open_editor(sock_str)
 		.await
-		.context("connecting to the session bus (DBUS_SESSION_BUS_ADDRESS)")?;
-	let proxy = RemowtEditorProxy::builder(&conn)
-		.destination(BUS_NAME)?
-		.path(SERVICE_PATH)?
-		.build()
-		.await?;
-	let result = proxy.edit(&sock_str).await;
+		.map_err(|e| anyhow!("requesting editor on the User: {e}"))
+		.and_then(|r| r.map_err(|e| anyhow!("editor failed: {e}")));
 
 	if tokio::time::timeout(Duration::from_secs(2), child.wait())
 		.await
@@ -143,8 +77,7 @@ pub async fn edit(path: String) -> anyhow::Result<()> {
 	}
 	let _ = fs::remove_file(&sock);
 
-	result?;
-	Ok(())
+	result
 }
 
 async fn wait_for_socket(path: &Path) -> anyhow::Result<()> {

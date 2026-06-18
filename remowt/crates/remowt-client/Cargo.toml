@@ -2,7 +2,7 @@
 name = "remowt-client"
 description = "russh-based client connection to a remowt agent"
 version.workspace = true
-edition = "2021"
+edition.workspace = true
 license.workspace = true
 
 [dependencies]

@@ -722,9 +722,9 @@ checksum = "8ae3f5d315924270530207e2a68396c3cc547f6dca3fbdca317cfb1a51edb593"
 
 [[package]]
 name = "camino"
-version = "1.2.2"
+version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e629a66d692cb9ff1a1c664e41771b3dcaf961985a9774c0eb0bd1b51cf60a48"
+checksum = "b4ce8d3bd5823c7504d3f579f13e7b2f3da252fcb938c594d5680ee508bf846f"
 dependencies = [
  "serde_core",
 ]
@@ -1899,9 +1899,9 @@ dependencies = [
  "fleet-shared",
  "hex",
  "hmac 0.13.0",
- "pbkdf2 0.12.2",
+ "pbkdf2 0.13.0",
  "rand 0.10.1",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "x25519-dalek",
 ]
 
@@ -5011,6 +5011,7 @@ dependencies = [
  "nix-eval",
  "remowt-client",
  "remowt-endpoints",
+ "remowt-link-shared",
  "serde",
  "thiserror 2.0.18",
  "tokio",
@@ -5031,13 +5032,13 @@ dependencies = [
  "iroh-base",
  "n0-watcher",
  "noq-udp",
- "remowt-ui-prompt",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -5093,11 +5094,11 @@ dependencies = [
  "anyhow",
  "bifrostlink",
  "bifrostlink-macros",
+ "remowt-link-shared",
  "serde",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "zbus",
 ]
 
 [[package]]

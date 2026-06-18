@@ -6,14 +6,12 @@ use std::sync::{Arc, Mutex};
 use remowt_endpoints::forward::ForwardClient;
 use remowt_link_shared::editor::{EditorBackend, Error};
 use remowt_link_shared::BifConfig;
-use russh::client::Handle;
 use tokio::net::{TcpListener, UdpSocket, UnixListener};
 use tracing::error;
 
-use crate::{Remowt, SshHandler};
+use crate::Remowt;
 
 pub struct SshEditor {
-	pub sess: Arc<Handle<SshHandler>>,
 	pub conn: Remowt,
 }
 impl EditorBackend for SshEditor {
@@ -22,21 +20,41 @@ impl EditorBackend for SshEditor {
 		let _ = std::fs::remove_file(&local);
 		let listener = UnixListener::bind(&local).map_err(|e| Error::Failed(e.to_string()))?;
 
-		let sess = self.sess.clone();
+		let conn = self.conn.clone();
 		let forward = tokio::spawn(async move {
 			loop {
 				let Ok((mut stream, _)) = listener.accept().await else {
 					break;
 				};
-				let sess = sess.clone();
+				let conn = conn.clone();
 				let remote = socket_path.clone();
 				tokio::spawn(async move {
-					match sess.channel_open_direct_streamlocal(remote).await {
-						Ok(ch) => {
-							let mut remote = ch.into_stream();
+					// Rides the iroh fast tunnel when established, else an
+					// ssh-forwarded unix socket.
+					let (forwarded, tunnel) = match conn.bind_fast_tunnel("editor", false).await {
+						Ok(v) => v,
+						Err(e) => {
+							error!("editor: bind tunnel failed: {e}");
+							return;
+						}
+					};
+					let fclient: ForwardClient<BifConfig> = conn.endpoints();
+					match fclient.connect_unix(tunnel, remote).await {
+						Ok(Ok(())) => {}
+						Ok(Err(e)) => {
+							error!("editor: agent connect_unix failed: {e}");
+							return;
+						}
+						Err(e) => {
+							error!("editor: connect_unix rpc failed: {e}");
+							return;
+						}
+					}
+					match forwarded.accept().await {
+						Ok(mut remote) => {
 							let _ = tokio::io::copy_bidirectional(&mut stream, &mut remote).await;
 						}
-						Err(e) => error!("opening direct-streamlocal to nvim failed: {e}"),
+						Err(e) => error!("editor: accept tunnel failed: {e}"),
 					}
 				});
 			}

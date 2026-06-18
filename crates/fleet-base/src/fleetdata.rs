@@ -6,6 +6,7 @@ use std::{
 	},
 	fmt,
 	io::{self, Cursor},
+	str::FromStr,
 	sync::RwLock,
 };
 
@@ -92,8 +93,9 @@ pub struct FleetData {
 	#[serde(skip_serializing)]
 	host_secrets: BTreeMap<SecretOwner, BTreeMap<String, FleetSecretDistribution>>,
 }
-impl FleetData {
-	pub fn from_str(s: &str) -> anyhow::Result<Self> {
+impl FromStr for FleetData {
+	type Err = anyhow::Error;
+	fn from_str(s: &str) -> anyhow::Result<Self> {
 		let mut data: Self = nixlike::parse_str(s)?;
 		if !data.host_secrets.is_empty() {
 			info!("migrating host secrets into shared secrets structure");
@@ -294,15 +296,16 @@ impl FleetSecretDistributions {
 	/// Drop expired distributions
 	fn prune_expired(&mut self, now: DateTime<Utc>) {
 		for ele in self.distributions_mut() {
-			if let Some(expires_at) = ele.secret.expires_at {
-				if expires_at < now {
-					ele.prune(format!("expired during check at {now}"));
-				}
+			if let Some(expires_at) = ele.secret.expires_at
+				&& expires_at < now
+			{
+				ele.prune(format!("expired during check at {now}"));
 			}
 		}
 	}
 	/// Perform all pruning relevant to shared secrets
 	/// Also see expected_owner_removed
+	#[allow(clippy::too_many_arguments)]
 	pub fn prune_shared(
 		&mut self,
 		expected_owners: &BTreeSet<SecretOwner>,
@@ -323,14 +326,15 @@ impl FleetSecretDistributions {
 		let mut to_add = expected_owners.difference(&current_owners);
 		if to_add.next().is_some() && unique && regenerate_on_owner_added {
 			for dist in self.distributions_mut() {
-				dist.prune(format!(
+				dist.prune(
 					"owners missing, can't add new distribution, regeneration preferred"
-				));
+						.to_string(),
+				);
 			}
 			return;
 		}
 
-		for to_remove in current_owners.difference(&expected_owners) {
+		for to_remove in current_owners.difference(expected_owners) {
 			self.entry(to_remove.clone()).remove(
 				regenerate_on_owner_removed,
 				"owner was removed from expected owners list, regenerate_on_owner_removed is set"
@@ -362,9 +366,7 @@ impl FleetSecretDistributions {
 	) -> Option<usize> {
 		self.distributions()
 			.enumerate()
-			.max_by(|(_, a), (_, b)| {
-				compare_dists(&a, &b, prefer_identities, include_pruned_owners)
-			})
+			.max_by(|(_, a), (_, b)| compare_dists(a, b, prefer_identities, include_pruned_owners))
 			.map(|(p, _)| p)
 	}
 	/// Secret wants to be the same on all hosts, leave only one unpruned version of it
@@ -410,10 +412,10 @@ impl FleetSecretDistributions {
 		filter_owner: Option<&SecretOwner>,
 	) {
 		'dist: for ele in self.distributions_mut() {
-			if let Some(filter_owner) = filter_owner {
-				if !ele.owners.contains(filter_owner) {
-					continue;
-				}
+			if let Some(filter_owner) = filter_owner
+				&& !ele.owners.contains(filter_owner)
+			{
+				continue;
 				// Note: secret still can have multiple owners even if it is host-owned
 				// in this case we expect that all owners using the same generator, so we can prune distribution for all of them
 			}
@@ -442,10 +444,10 @@ impl FleetSecretDistributions {
 		filter_owner: Option<&SecretOwner>,
 	) {
 		for ele in self.distributions_mut() {
-			if let Some(filter_owner) = filter_owner {
-				if !ele.owners.contains(filter_owner) {
-					continue;
-				}
+			if let Some(filter_owner) = filter_owner
+				&& !ele.owners.contains(filter_owner)
+			{
+				continue;
 				// Note: secret still can have multiple owners even if it is host-owned
 				// in this case we expect that all owners using the same generator, so we can prune distribution for all of them
 			}
@@ -519,7 +521,7 @@ impl FleetSecretDistributions {
 	}
 }
 
-struct OccupiedDistEntry<'d> {
+pub struct OccupiedDistEntry<'d> {
 	distributions: &'d mut FleetSecretDistributions,
 	idx: usize,
 	owners: BTreeSet<SecretOwner>,
@@ -537,16 +539,16 @@ impl<'d> OccupiedDistEntry<'d> {
 			owners: self.owners,
 		}
 	}
-	fn set(self, secret: FleetSecretData, reason: String) -> Self {
+	pub fn set(self, secret: FleetSecretData, reason: String) -> Self {
 		self.remove(false, reason).set(secret)
 	}
 }
-struct VacantDistEntry<'d> {
+pub struct VacantDistEntry<'d> {
 	distributions: &'d mut FleetSecretDistributions,
 	owners: BTreeSet<SecretOwner>,
 }
 impl<'d> VacantDistEntry<'d> {
-	fn set(self, secret: FleetSecretData) -> OccupiedDistEntry<'d> {
+	pub fn set(self, secret: FleetSecretData) -> OccupiedDistEntry<'d> {
 		let Self {
 			distributions,
 			owners,
@@ -568,18 +570,18 @@ impl<'d> VacantDistEntry<'d> {
 	}
 }
 
-enum DistEntry<'d> {
+pub enum DistEntry<'d> {
 	Vacant(VacantDistEntry<'d>),
 	Occupied(OccupiedDistEntry<'d>),
 }
 impl DistEntry<'_> {
-	fn remove(self, whole_dist: bool, reason: String) -> Self {
+	pub fn remove(self, whole_dist: bool, reason: String) -> Self {
 		match self {
 			DistEntry::Vacant(_) => self,
 			DistEntry::Occupied(o) => Self::Vacant(o.remove(whole_dist, reason)),
 		}
 	}
-	fn set(self, secret: FleetSecretData, reason: String) -> Self {
+	pub fn set(self, secret: FleetSecretData, reason: String) -> Self {
 		Self::Occupied(match self {
 			DistEntry::Vacant(e) => e.set(secret),
 			DistEntry::Occupied(e) => e.set(secret, reason),
@@ -683,7 +685,7 @@ impl Serialize for FleetSecrets {
 }
 
 impl FleetSecrets {
-	pub fn keys(&self) -> btree_map::Keys<String, FleetSecretDistributions> {
+	pub fn keys(&self) -> btree_map::Keys<'_, String, FleetSecretDistributions> {
 		self.0.keys()
 	}
 
@@ -713,9 +715,7 @@ impl FleetSecrets {
 	}
 
 	pub fn get_or_create(&mut self, secret: &str) -> &mut FleetSecretDistributions {
-		self.0
-			.entry(secret.to_owned())
-			.or_insert(FleetSecretDistributions::default())
+		self.0.entry(secret.to_owned()).or_default()
 	}
 
 	pub fn contains(&self, secret: &str) -> bool {

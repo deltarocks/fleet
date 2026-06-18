@@ -11,7 +11,8 @@ use remowt_link_shared::BifConfig;
 use tokio::time::sleep;
 use tracing::{Instrument as _, error, info, info_span, warn};
 
-use crate::host::{Config, ConfigHost, DeployKind, Generation, GenerationStorage};
+use crate::host::{ConfigHost, DeployKind};
+use crate::pins::{Generation, GenerationStorage};
 
 #[derive(ValueEnum, Clone, Copy)]
 pub enum DeployAction {
@@ -260,13 +261,12 @@ pub async fn deploy_task(
 			{
 				// It is ok, if there was no reboot - then timer might not be running.
 			}
-			if action.should_schedule_rollback_run() {
-				if let Err(e) = elevated_systemd
+			if action.should_schedule_rollback_run()
+				&& let Err(e) = elevated_systemd
 					.stop("rollback-watchdog-run.timer".to_owned())
 					.await
-				{
-					error!("failed to disarm rollback run: {e}");
-				}
+			{
+				error!("failed to disarm rollback run: {e}");
 			}
 		} else if let Err(_e) = elevated_fs
 			.rm_file(Utf8PathBuf::from("/etc/fleet_rollback_marker"))
@@ -280,7 +280,6 @@ pub async fn deploy_task(
 }
 
 pub async fn upload_task(
-	config: &Config,
 	host: &ConfigHost,
 	location: GenerationStorage,
 	generation: Utf8PathBuf,

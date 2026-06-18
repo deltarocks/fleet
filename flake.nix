@@ -23,13 +23,6 @@
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    remowt-agents = {
-      url = "git+https://gerrit.delta.rocks/remowt";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.flake-parts.follows = "flake-parts";
-      inputs.crane.follows = "crane";
-      inputs.shelly.follows = "shelly";
-    };
     # DeterminateSystem's nix fork is controversial, but I don't mind it,
     # and it has lazy-trees support which is useful for fleet.
     nix = {

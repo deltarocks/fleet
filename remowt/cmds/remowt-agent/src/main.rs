@@ -7,8 +7,8 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use bifrostlink::declarative::RemoteEndpoints;
 use bifrostlink::Rpc;
+use bifrostlink::declarative::RemoteEndpoints;
 use bifrostlink_ports::stdio::from_stdio;
 use bifrostlink_ports::unix_socket::from_socket;
 use clap::Parser;
@@ -17,9 +17,9 @@ use remowt_endpoints::{
 	subprocess::Subprocess, systemd::Systemd,
 };
 use remowt_link_shared::iroh_tunnel::TunnelDialer;
-use remowt_link_shared::{editor::EditorEndpointsClient, Address, BifConfig};
-use remowt_polkit_shared::{emphasize, Identity, PidDisplay};
-use remowt_ui_prompt::bifrost::PromptEndpointsClient;
+use remowt_link_shared::{Address, BifConfig, gateway};
+use remowt_polkit_shared::{Identity, PidDisplay, emphasize};
+use remowt_ui_prompt::bifrost::{PromptEndpointsClient, serve_prompts};
 use remowt_ui_prompt::rofi::RofiPrompter;
 use remowt_ui_prompt::{PrependSourcePrompter, Prompter, Source};
 use tokio::fs;
@@ -29,13 +29,12 @@ use tokio::task::AbortHandle;
 use tracing::{debug, trace};
 use zbus::fdo;
 use zbus::zvariant::{OwnedValue, Str};
-use zbus::{interface, Connection};
+use zbus::{Connection, interface};
 use zbus_polkit::policykit1::Subject;
 
 use self::helper::{Helper, SocketHelper, SuidHelper};
 
 pub mod askpass;
-pub mod bus;
 pub mod editor;
 pub mod helper;
 
@@ -132,19 +131,18 @@ where
 					0 => {
 						return Err(fdo::Error::AuthFailed(
 							"no identity to authenticate as".to_owned(),
-						))
+						));
 					}
 					1 => 0,
-					_ => {
-						prompter
-							.prompt_enum(
-								"Identity",
-								"Select identity to use for polkit authorization",
-								&identity_displays,
-								&[],
-							)
-							.await?
-					}
+					_ => prompter
+						.prompt_enum(
+							"Identity",
+							"Select identity to use for polkit authorization",
+							&identity_displays,
+							&[],
+						)
+						.await
+						.map_err(prompt_err)?,
 				};
 				debug!("identity chosen");
 
@@ -195,6 +193,15 @@ where
 		}
 		// debug!("Authentication cancled ! {cookie}");
 		Ok(())
+	}
+}
+
+fn prompt_err(value: remowt_ui_prompt::Error) -> fdo::Error {
+	use remowt_ui_prompt::Error;
+	match value {
+		Error::Cancel => fdo::Error::NoReply("input was cancelled".to_owned()),
+		Error::Remote(e) => fdo::Error::NoReply(format!("remote error occured: {e}")),
+		Error::InputError(e) => fdo::Error::Failed(e),
 	}
 }
 
@@ -268,10 +275,12 @@ async fn main_real() -> anyhow::Result<()> {
 	};
 	register_auth_agent(&system_conn, Agent::new(helper, RofiPrompter)).await?;
 
-	let session_conn = Connection::session().await?;
-	askpass::serve(&session_conn, RofiPrompter).await?;
+	let mut rpc = Rpc::<BifConfig>::new(Address::User);
+	serve_prompts(&mut rpc, RofiPrompter);
 
-	let _keep_alive = (system_conn, session_conn);
+	gateway::serve(rpc.clone(), &gateway::local_socket()?).await?;
+
+	let _keep_alive = (system_conn, rpc);
 	pending().await
 }
 async fn main_real_agent(
@@ -298,13 +307,9 @@ async fn main_real_agent(
 	remowt_plugin::host::serve(&mut rpc);
 
 	let user_prompter = PromptEndpointsClient::wrap(rpc.remote(Address::User));
-	let editor_client = EditorEndpointsClient::wrap(rpc.remote(Address::User));
-
-	let bus = bus::spawn().await?;
-	askpass::serve(&bus.conn, user_prompter.clone()).await?;
-	editor::serve(&bus.conn, editor_client).await?;
 
 	let helpers = tempfile::Builder::new().prefix("remowt-path.").tempdir()?;
+	let gateway_socket = helpers.path().join(gateway::SOCKET_NAME);
 	let exe = std::env::current_exe()?;
 	let askpass_helper = helpers.path().join("remowt-askpass");
 	let editor_helper = helpers.path().join("remowt-editor");
@@ -342,7 +347,7 @@ async fn main_real_agent(
 		std::env::set_var("SSH_ASKPASS_REQUIRE", "force");
 		std::env::set_var("EDITOR", &editor_helper);
 		std::env::set_var("VISUAL", &editor_helper);
-		std::env::set_var("DBUS_SESSION_BUS_ADDRESS", &bus.address);
+		std::env::set_var(gateway::SOCKET_ENV, &gateway_socket);
 	}
 
 	let port = match path {
@@ -351,10 +356,9 @@ async fn main_real_agent(
 	};
 	rpc.add_direct(Address::User, port, bifrostlink::Rtt(0));
 
+	gateway::serve(rpc.clone(), &gateway_socket).await?;
+
 	let polkit_conn = if !privileged && !local {
-		// The unprivileged agent doubles as a polkit authentication agent so
-		// `run0` (e.g. our own elevation) routes its prompt to the User over
-		// bifrost instead of failing on a tty-less session.
 		let conn = Connection::system().await?;
 		let helper = SocketHelper {
 			fallback: SuidHelper,
@@ -365,7 +369,7 @@ async fn main_real_agent(
 		None
 	};
 
-	let _keep_alive = (bus, helpers, polkit_conn);
+	let _keep_alive = (helpers, polkit_conn);
 	pending().await
 }
 

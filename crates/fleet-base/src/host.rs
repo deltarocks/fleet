@@ -13,18 +13,17 @@ use anyhow::{Context, Result, anyhow, bail, ensure};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use fleet_shared::SecretData;
-use nix_eval::{Store, Value, eval_store, nix_go, nix_go_json, util::assert_warn};
+use nix_eval::{Store, Value, drv::DrvGraph, eval_store, nix_go, nix_go_json, util::assert_warn};
 use remowt_client::{AgentBundle, Remowt};
 use remowt_endpoints::fs::FsClient;
-use remowt_link_shared::Address;
+use remowt_fleet::NixClient;
+use remowt_link_shared::BifConfig;
 use remowt_ui_prompt::auto::AutoPrompter;
 use remowt_ui_prompt::bifrost::PromptEndpoints;
 use remowt_ui_prompt::{PrependSourcePrompter, Source};
-use tabled::Tabled;
 use tempfile::NamedTempFile;
-use time::UtcDateTime;
-use tokio::task::spawn_blocking;
-use tracing::warn;
+use tokio::{sync::OnceCell, task::spawn_blocking};
+use tracing::{info, warn};
 
 use crate::fleetdata::{
 	FleetData, FleetSecretData, FleetSecretDistribution, FleetSecretPart, SecretOwner,
@@ -101,7 +100,7 @@ pub struct ConfigHost {
 	groups: OnceLock<Vec<String>>,
 
 	// TODO: Both of those values are taken from host opts, there should be a cleaner way to specify it
-	deploy_kind: OnceLock<DeployKind>,
+	deploy_kind: OnceCell<DeployKind>,
 	session_destination: OnceLock<String>,
 	legacy_ssh_store: OnceLock<bool>,
 
@@ -114,7 +113,7 @@ pub struct ConfigHost {
 	pub local: bool,
 	pub remowt: OnceLock<Remowt>,
 	nix_store: OnceLock<Arc<Store>>,
-	nix_plugin: tokio::sync::OnceCell<()>,
+	nix_plugin: OnceCell<()>,
 }
 
 const NIX_PLUGIN_ID: u16 = 2;
@@ -132,73 +131,14 @@ fn agent_bundle() -> Result<AgentBundle> {
 	AgentBundle::from_dir(agents_dir()?)
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum GenerationStorage {
-	Deployer,
-	Machine,
-	Pusher,
-}
-impl GenerationStorage {
-	fn prefix(&self) -> &'static str {
-		match self {
-			GenerationStorage::Deployer => "deployer.",
-			GenerationStorage::Machine => "",
-			GenerationStorage::Pusher => "pusher.",
-		}
-	}
-}
-
-#[derive(Tabled, Debug)]
-pub struct Generation {
-	#[tabled(rename = "ID", format("{}", self.rollback_id()))]
-	pub id: u32,
-	#[tabled(rename = "Current")]
-	pub current: bool,
-	#[tabled(rename = "Created at")]
-	pub datetime: UtcDateTime,
-	#[tabled(format = "{:?}")]
-	pub store_path: Utf8PathBuf,
-	#[tabled(skip)]
-	pub location: GenerationStorage,
-}
-impl Generation {
-	pub fn rollback_id(&self) -> String {
-		format!("{}{}", self.location.prefix(), self.id)
-	}
+enum RemoteDerivationMode {
+	CopySigned,
+	Copy,
+	Attic,
+	Cachix,
 }
 
 impl ConfigHost {
-	pub async fn list_generations(&self, profile: &str) -> Result<Vec<Generation>> {
-		let plugin_id = self.ensure_nix_plugin().await?;
-		let nix = self
-			.remowt()
-			.await?
-			.plugin_endpoints::<remowt_fleet::NixClient<_>>(plugin_id);
-		let raw = nix
-			.list_generations(profile.to_owned())
-			.await
-			.map_err(|e| anyhow!("{e:?}"))?
-			.map_err(|e| anyhow!("{e}"))?;
-		raw.into_iter()
-			.map(|g| {
-				let id: u32 =
-					g.id.try_into()
-						.with_context(|| format!("generation id {} doesn't fit in u32", g.id))?;
-				let datetime = UtcDateTime::from_unix_timestamp(g.creation_time_unix)
-					.with_context(|| {
-						format!("invalid generation timestamp {}", g.creation_time_unix)
-					})?;
-				Ok(Generation {
-					id,
-					current: g.current,
-					datetime,
-					store_path: g.store_path,
-					location: GenerationStorage::Machine,
-				})
-			})
-			.collect()
-	}
-
 	pub fn set_session_destination(&self, dest: String) {
 		self.session_destination
 			.set(dest)
@@ -215,34 +155,31 @@ impl ConfigHost {
 			.expect("legacy ssh store is already set")
 	}
 	pub async fn deploy_kind(&self) -> Result<DeployKind> {
-		if let Some(kind) = self.deploy_kind.get() {
-			return Ok(*kind);
-		}
-		let remowt = self.remowt().await?;
-		let fs = remowt.endpoints::<FsClient<_>>();
-		let is_fleet_managed = match fs.file_exists(Utf8PathBuf::from("/etc/FLEET_HOST")).await {
-			Ok(v) => v,
-			Err(e) => {
-				bail!("failed to query remote system kind: {e}");
+		self.deploy_kind.get_or_try_init(|| async {
+			let remowt = self.remowt().await?;
+			let fs = remowt.endpoints::<FsClient<_>>();
+			let is_fleet_managed = match fs.file_exists(Utf8PathBuf::from("/etc/FLEET_HOST")).await {
+				Ok(v) => v,
+				Err(e) => {
+					bail!("failed to query remote system kind: {e}");
+				}
+			};
+			if !is_fleet_managed {
+				bail!(
+					"{}",
+					indoc::indoc! {"
+					host is not marked as managed by fleet
+					if you're not trying to lustrate/install system from scratch,
+					you should either
+						1. manually create /etc/FLEET_HOST file on the target host,
+						2. use ?deploy_kind=fleet host argument if you're upgrading from older version of fleet
+						3. use ?deploy_kind=upgrade_to_fleet if you're upgrading from plain nixos to fleet-managed nixos
+					for installation use ?deploy_kind=nixos_install / ?deploy_kind=nixos_lustrate 
+				"}
+				);
 			}
-		};
-		if !is_fleet_managed {
-			bail!(
-				"{}",
-				indoc::indoc! {"
-				host is not marked as managed by fleet
-				if you're not trying to lustrate/install system from scratch,
-				you should either
-					1. manually create /etc/FLEET_HOST file on the target host,
-					2. use ?deploy_kind=fleet host argument if you're upgrading from older version of fleet
-					3. use ?deploy_kind=upgrade_to_fleet if you're upgrading from plain nixos to fleet-managed nixos
-				for installation use ?deploy_kind=nixos_install / ?deploy_kind=nixos_lustrate 
-			"}
-			);
-		}
-		// TOCTOU is possible
-		let _ = self.deploy_kind.set(DeployKind::Fleet);
-		Ok(*self.deploy_kind.get().expect("deploy kind is just set"))
+			Ok(DeployKind::Fleet)
+		}).await.copied()
 	}
 	async fn connection(&self) -> Result<Remowt> {
 		if let Some(conn) = self.remowt.get() {
@@ -285,6 +222,11 @@ impl ConfigHost {
 		self.connection().await
 	}
 
+	pub async fn nix_client(&self) -> Result<NixClient<BifConfig>> {
+		let remowt = self.remowt().await?;
+		let plugin_id = self.ensure_nix_plugin().await?;
+		Ok(remowt.plugin_endpoints(plugin_id))
+	}
 	pub fn ensure_nix_plugin(&self) -> Pin<Box<dyn Future<Output = Result<u16>> + Send + '_>> {
 		Box::pin(async {
 			self.nix_plugin
@@ -305,12 +247,6 @@ impl ConfigHost {
 						.run0_load_plugin_path(NIX_PLUGIN_ID, bin.as_str())
 						.await
 						.context("failed to load the fleet nix plugin")?;
-					self.remowt()
-						.await?
-						.rpc()
-						.wait_for_connection_to(Address::Plugin(NIX_PLUGIN_ID))
-						.await
-						.map_err(|_| anyhow!("failed to wait for plugin"))?;
 					anyhow::Ok(())
 				})
 				.await?;
@@ -407,6 +343,10 @@ impl ConfigHost {
 		}
 		let sign: Pin<Box<dyn Future<Output = Result<()>> + Send>> = {
 			let path = path.clone();
+			let graph = DrvGraph::resolve(&eval_store(), &path)
+				.context("failed to resolve graph to be uploaded")?;
+			info!("signing {} paths", graph.nodes.len());
+
 			Box::pin(async move {
 				let local = self.config.local_host();
 				let plugin_id = local.ensure_nix_plugin().await?;
@@ -564,8 +504,8 @@ impl Config {
 					local: true,
 					remowt: OnceLock::new(),
 					nix_store: OnceLock::new(),
-					nix_plugin: tokio::sync::OnceCell::new(),
-					deploy_kind: OnceLock::new(),
+					nix_plugin: OnceCell::new(),
+					deploy_kind: OnceCell::new(),
 					session_destination: OnceLock::new(),
 					legacy_ssh_store: OnceLock::new(),
 				})
@@ -607,8 +547,8 @@ impl Config {
 			local: self.localhost == name,
 			remowt: OnceLock::new(),
 			nix_store: OnceLock::new(),
-			nix_plugin: tokio::sync::OnceCell::new(),
-			deploy_kind: OnceLock::new(),
+			nix_plugin: OnceCell::new(),
+			deploy_kind: OnceCell::new(),
 			session_destination: OnceLock::new(),
 			legacy_ssh_store: OnceLock::new(),
 		})

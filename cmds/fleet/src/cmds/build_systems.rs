@@ -5,8 +5,9 @@ use camino::Utf8PathBuf;
 use clap::Parser;
 use fleet_base::{
 	deploy::{DeployAction, deploy_task, upload_task},
-	host::{Config, DeployKind, GenerationStorage},
+	host::{Config, DeployKind},
 	opts::FleetOpts,
+	pins::GenerationStorage,
 };
 use futures::{StreamExt as _, stream::FuturesUnordered};
 use nix_eval::nix_go;
@@ -145,8 +146,7 @@ impl Deploy {
 					}
 
 					let remote_path =
-						match upload_task(&config, &host, GenerationStorage::Deployer, built).await
-						{
+						match upload_task(&host, GenerationStorage::Deployer, built).await {
 							Ok(v) => v,
 							Err(e) => {
 								error!("upload failed: {e}");

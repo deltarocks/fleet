@@ -7,6 +7,7 @@ use camino::Utf8PathBuf;
 use nix_eval::eval_store;
 use remowt_client::Remowt;
 use remowt_endpoints::nix_daemon::NixDaemonClient;
+use remowt_link_shared::iroh_tunnel::TunnelAddr;
 use serde::{Deserialize, Serialize};
 use tokio::net::UnixListener;
 use tokio::task::spawn_blocking;
@@ -98,8 +99,10 @@ async fn serve(conn: Remowt, listener: UnixListener, store: String) -> Result<()
 				continue;
 			}
 		};
-		let sock_str = remote_sock.as_str().to_owned();
-		match nix.serve_store(store.clone(), sock_str).await {
+		match nix
+			.serve_store(store.clone(), TunnelAddr::Unix(remote_sock))
+			.await
+		{
 			Ok(Ok(())) => {}
 			Ok(Err(e)) => {
 				error!("nix bridge: {e}");

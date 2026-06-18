@@ -2,7 +2,7 @@
 name = "remowt-link-shared"
 description = "Shared bifrostlink endpoint wiring for remowt"
 version.workspace = true
-edition = "2021"
+edition.workspace = true
 license.workspace = true
 
 [dependencies]
@@ -13,13 +13,13 @@ camino = { workspace = true, features = ["serde1"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "sync", "rt"] }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt", "sync"] }
 tokio-util = { workspace = true, features = ["codec"] }
 tracing.workspace = true
-remowt-ui-prompt.workspace = true
+uuid = { workspace = true, features = ["v4"] }
 
+futures.workspace = true
 iroh.workspace = true
 iroh-base.workspace = true
-noq-udp.workspace = true
 n0-watcher.workspace = true
-futures.workspace = true
+noq-udp.workspace = true

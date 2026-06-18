@@ -75,14 +75,8 @@ async fn main() -> anyhow::Result<()> {
 			description: "".to_owned(),
 		},
 	);
-	if let Some(sess) = conn.ssh() {
-		serve_editor(
-			&mut rpc,
-			SshEditor {
-				sess,
-				conn: conn.clone(),
-			},
-		);
+	if conn.ssh().is_some() {
+		serve_editor(&mut rpc, SshEditor { conn: conn.clone() });
 	}
 
 	debug!("entering shell");

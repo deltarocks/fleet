@@ -1,8 +1,6 @@
 #![recursion_limit = "512"]
 
 pub(crate) mod cmds;
-// pub(crate) mod command;
-pub(crate) mod extra_args;
 
 use std::{process::ExitCode, sync::Arc};
 

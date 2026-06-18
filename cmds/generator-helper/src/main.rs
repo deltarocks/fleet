@@ -14,7 +14,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD, write::EncoderWrite
 use clap::{Parser, ValueEnum};
 use ed25519_dalek::SecretKey;
 use fleet_shared::SecretData;
-use hmac::Mac as _;
+use hmac::{KeyInit as _, Mac as _};
 use rand::{
 	Rng as _,
 	distr::{Alphanumeric, Distribution, SampleString, Uniform},
@@ -338,8 +338,8 @@ fn main() -> Result<()> {
 					);
 
 					type HmacSha256 = hmac::Hmac<sha2::Sha256>;
-					let mut mac = <HmacSha256 as hmac::Mac>::new_from_slice(&salted)
-						.expect("HMAC accepts any key length");
+					let mut mac =
+						HmacSha256::new_from_slice(&salted).expect("HMAC accepts any key length");
 					mac.update(b"Client Key");
 					let client_key = mac.finalize().into_bytes();
 
@@ -347,8 +347,8 @@ fn main() -> Result<()> {
 					hasher.update(client_key);
 					let stored_key = hasher.finalize();
 
-					let mut mac = <HmacSha256 as hmac::Mac>::new_from_slice(&salted)
-						.expect("HMAC accepts any key length");
+					let mut mac =
+						HmacSha256::new_from_slice(&salted).expect("HMAC accepts any key length");
 					mac.update(b"Server Key");
 					let server_key = mac.finalize().into_bytes();
 

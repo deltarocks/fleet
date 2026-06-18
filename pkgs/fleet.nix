@@ -3,6 +3,7 @@
   craneLib,
   installShellFiles,
   inputs,
+  remowt-agents-bundle,
 
   stdenv,
   pkg-config,
@@ -26,7 +27,7 @@ craneLib.buildPackage rec {
 
   cargoExtraArgs = "--locked -p ${pname}";
 
-  REMOWT_AGENTS_DIR = "${inputs.remowt-agents.packages.${system}.remowt-agents}";
+  REMOWT_AGENTS_DIR = "${remowt-agents-bundle}";
   # TODO: built-in fleet prompter should be a prodash widget, or it should require
   # tty remowt prompter running on host machine idk.
   ROFI = "${rofi}/bin/rofi";
